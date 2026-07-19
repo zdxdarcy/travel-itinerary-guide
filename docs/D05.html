@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>景点导览</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2733; --muted:#6b7686;
+    --line:#e6e9ef; --accent:#2f6df0; --accent-soft:#eaf1ff; --accent-light:#cfe0ff; --star:#f5a623;
+    --shadow:0 6px 24px rgba(20,40,80,.08);
+    --nav-h:56px; /* 顶部标签栏高度：运行时由 JS 测量真实高度后覆盖，用于锚点偏移与右栏吸顶 */
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.65;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  html{scroll-behavior:smooth} /* 点击标签栏 chip 平滑跳转，并配合 scroll-margin-top 不被吸顶标签栏遮挡 */
+  .wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+
+  /* Header */
+  header.hero{background:linear-gradient(135deg,#2f6df0,#6aa0ff);color:#fff;padding:40px 0}
+  .hero-body{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .hero-text{flex:1;min-width:280px}
+  .flag{font-size:42px;line-height:1}
+  .hero h1{margin:12px 0 4px;font-size:34px;font-weight:800;letter-spacing:.5px}
+  .hero .region{opacity:.92;font-size:15px}
+  .hero p.intro{margin:16px 0 0;max-width:640px;font-size:15.5px;opacity:.96}
+  .hero-map{width:340px;flex:0 0 340px;height:230px;border-radius:16px;overflow:hidden;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.4)}
+  .hero-map iframe{width:100%;height:100%;border:0;filter:brightness(.95)}
+
+  /* 顶部标签栏：各景点选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）+ 右侧「保存」按钮 */
+  nav.toc{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  nav.toc .wrap{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-top:10px;padding-bottom:10px}
+  /* 标签栏只保留选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）；计数与复制按钮已移除 */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;flex:1;align-items:flex-start}
+  nav.toc a{font-size:13px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;
+    color:var(--muted);background:#fff;white-space:nowrap;transition:all .15s;flex:0 0 auto}
+  /* 三态配色：入内参观=蓝色、外部参观=淡蓝色、未选=灰色 */
+  nav.toc a.chip-inside{background:var(--accent);color:#fff;border-color:var(--accent)}
+  nav.toc a.chip-outside{background:var(--accent-light);color:var(--accent);border-color:#bcd4ff}
+  nav.toc a.chip-none{background:#fff;color:var(--muted);border-color:var(--line);opacity:.6}
+  nav.toc a:hover{border-color:var(--accent)}
+  nav.toc a.active-chip{outline:2px solid var(--accent);outline-offset:1px}
+  /* 「保存更改」按钮：已保存=绿色，切换选取后变橙色警示（未保存），点击保存后恢复绿色 */
+  .save-btn{margin-left:auto;flex:0 0 auto;font-size:13px;font-weight:700;color:#fff;background:#2f9e44;
+    border:1px solid #2f9e44;border-radius:999px;padding:7px 16px;cursor:pointer;white-space:nowrap;transition:all .15s}
+  .save-btn:hover{background:#2b8a3e;border-color:#2b8a3e}
+  .save-btn.dirty{background:#e8590c;border-color:#e8590c;box-shadow:0 0 0 3px rgba(232,89,12,.18)}
+  .save-btn.dirty:hover{background:#d9480f;border-color:#d9480f}
+  /* 手机端：标签栏单排横向滚动；当前景点对应 chip 自动居中；「保存」按钮在右、简短 */
+  @media (max-width:760px){
+    nav.toc .wrap{flex-wrap:nowrap;align-items:center;gap:8px}
+    .save-btn{order:0;margin-left:auto;align-self:center;flex:0 0 auto;padding:6px 14px;font-size:13px}
+    .chips{flex:1 1 auto;max-width:none;max-height:none;overflow-x:auto;overflow-y:hidden;
+      flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:center;scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch}
+    nav.toc a{flex:0 0 auto}
+  }
+  @media (max-width:560px){ .save-btn{padding:6px 10px;font-size:12px} }
+
+  /* Attraction：电脑端两栏（左文右图），移动端单卡横向滑动（.deck）。
+     v2.1：移动端以横向滑动卡片（.deck）逐张切换；电脑端保持 v2.0 两栏 + 右栏地图。 */
+  .deck{ } /* 桌面端：普通竖向流；移动端在媒体查询中改为横向滑动容器 */
+  .attraction{display:flex;gap:28px;padding:40px 0;border-bottom:1px solid var(--line);
+    scroll-margin-top:calc(var(--nav-h) + 16px)}
+  .left{flex:1;min-width:0}
+  .right{width:540px;flex:0 0 540px;position:sticky;top:var(--nav-h);display:flex;flex-direction:column}
+  .a-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0;scroll-margin-top:calc(var(--nav-h) + 12px)}
+  .a-head h2{margin:0;font-size:24px;font-weight:800}
+  .a-head .en{color:var(--muted);font-size:14px}
+  /* 三态参观选择：入内参观(✓) / 外部参观(○) / 不参观(○灰)。
+     点击在三种状态间循环切换，文字随状态变化，桌面与手机端一致。 */
+  .visit-toggle{display:inline-flex;align-items:center;gap:6px;margin-left:auto;cursor:pointer;
+    border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:14px;font-weight:600;
+    background:#fff;color:var(--muted);user-select:none;transition:all .15s;flex:0 0 auto}
+  .visit-toggle .vt-ico{font-weight:700;font-size:15px;line-height:1}
+  .visit-toggle.vt-inside{color:#fff;border-color:var(--accent);background:var(--accent)}
+  .visit-toggle.vt-outside{color:var(--accent);border-color:#bcd4ff;background:var(--accent-light)}
+  .visit-toggle.vt-none{color:var(--muted);border-color:var(--line);background:#fff}
+  .visit-toggle:active{transform:scale(.96)}
+  /* 谷歌地图直达链接：电脑端在标题行右侧（.gmap-title），移动端与分类标签同行居右（.gmap-tag） */
+  .tag-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 6px}
+  .tag{display:inline-block;padding:4px 12px;background:var(--accent-soft);color:var(--accent);
+    border-radius:999px;font-size:13px;font-weight:600}
+  .gmap-head{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;
+    color:var(--accent);background:var(--accent-soft);border:1px solid #cfe0ff;border-radius:999px;padding:5px 12px;
+    white-space:nowrap;transition:transform .12s, background .15s}
+  .gmap-head:active{transform:scale(.96);background:#dbe8ff}
+  .gmap-tag{display:none}
+
+  .a-intro{font-size:15.5px;color:#33404f;margin:0 0 20px;line-height:1.85}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+  .fact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+  .fact h4{margin:0 0 6px;font-size:12.5px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;font-weight:700}
+  .fact p{margin:0;font-size:14.5px;color:var(--ink);line-height:1.6}
+  .gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:22px}
+  .gallery img{width:100%;height:190px;object-fit:cover;border-radius:12px;border:1px solid var(--line);
+    cursor:pointer;transition:transform .15s ease, box-shadow .15s ease;background:#eef1f5}
+  .gallery img:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+
+  /* 右栏：地图在上、评价在下（桌面端右栏与左栏等高，地图用 JS 计算高度填满「标题→信息卡底部」的高度，
+     评价卡用 JS 对齐图片画廊高度；内部保持 22px 间隙与左栏 facts→gallery 间隙一致） */
+  .mapcard{display:flex;flex-direction:column;gap:22px;align-items:stretch;flex:1 1 auto;min-height:0}
+  .map-frame{width:100%;flex:1 1 auto;min-height:340px;border:0;border-radius:14px;box-shadow:var(--shadow);display:block}
+  .reviewcol{width:100%;display:block;flex:0 0 auto}
+  .review-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;
+    box-shadow:var(--shadow);width:100%;display:flex;flex-direction:column;justify-content:flex-start}
+  .review-card .rc-title{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .review-card .stars{font-size:22px;letter-spacing:2px;color:var(--star);line-height:1}
+  .review-card .score{font-weight:800;font-size:18px;margin-left:6px;color:var(--ink)}
+  .review-card .meta{font-size:13px;color:var(--muted);margin-top:6px}
+  .review-card .src{font-size:12px;color:var(--muted);margin-top:2px}
+  .review-card .gmap-link{display:inline-block;margin-top:10px;font-size:13px;font-weight:600}
+  .review-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .review-item{font-size:13px;color:#33404f;line-height:1.5;padding:8px 10px;background:#f8f9fb;border-radius:10px;
+    border-left:3px solid var(--accent);display:flex;gap:8px;align-items:flex-start}
+  .review-item .rtext{flex:1;min-width:0}
+  .review-item .rbadge{flex:0 0 auto;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;margin-top:1px}
+  .rb-good{background:#e7f6ec;color:#1f9d4d;border:1px solid #bfe6cc}
+  .rb-neutral{background:#fff4e0;color:#b9791b;border:1px solid #f0d49a}
+  .rb-bad{background:#fdeaea;color:#cf3b3b;border:1px solid #f3c2c2}
+  .rt-good{border-left-color:#1f9d4d}
+  .rt-neutral{border-left-color:#b9791b}
+  .rt-bad{border-left-color:#cf3b3b}
+
+  footer{padding:34px 0 60px;color:var(--muted);font-size:13px;text-align:center;line-height:1.8}
+
+  /* 复制提示 toast */
+  .toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-size:14px;font-weight:600;
+    opacity:0;pointer-events:none;transition:all .25s;z-index:200}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .lb{position:fixed;inset:0;background:rgba(10,18,30,.86);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .lb.open{display:flex}
+  .lb img{max-width:92vw;max-height:88vh;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .lb .close{position:absolute;top:18px;right:24px;color:#fff;font-size:34px;cursor:pointer;line-height:1}
+
+  /* 平板及以下：两栏收起为单栏（左文 + 右图上下堆叠） */
+  @media (max-width:1000px){
+    .attraction{flex-direction:column;gap:18px}
+    .right{width:100%;flex:none;position:static}
+    .facts{grid-template-columns:1fr}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+  /* 手机端：横向滑动卡片切换景点（每张占满屏宽，卡内纵向滚动）；谷歌地图改与分类标签同行 */
+  @media (max-width:760px){
+    .wrap{padding:0 20px} /* 保持与标签栏一致的左右留空 */
+    #list.deck, .deck{padding:0;display:flex;flex-direction:row;gap:0;overflow-x:auto;scroll-snap-type:x mandatory;
+      -webkit-overflow-scrolling:touch}
+    .attraction{flex:0 0 100%;width:100%;min-width:0;scroll-snap-align:start;border-bottom:none;
+      min-height:calc(100vh - var(--nav-h));min-height:calc(100dvh - var(--nav-h));
+      overflow-y:auto;padding:22px 20px;gap:0;background:var(--card);border-right:1px solid var(--line)}
+    /* 手机端：左栏改为纵向 flex，用 order 把「图片」提到「开放时间/票价/时长/贴士」之前
+       （电脑端 DOM 顺序仍是 信息→图片，故桌面端保持 v2.0 格式，仅手机端重排） */
+    .left{flex:none;display:flex;flex-direction:column}
+    .gallery{grid-template-columns:1fr 1fr;order:4}
+    .facts{margin-bottom:22px;order:5} /* 手机端：实用贴士与评价卡之间恢复与其它一致的 22px 间隙 */
+    .mapcard{flex:none;height:auto;gap:22px} /* 手机端：评价卡与地图卡之间保留与其它卡片一致的空隙 */
+    .map-frame{height:300px;min-height:0;order:2;margin-top:0}
+    .reviewcol{order:1;margin-bottom:0}
+    .right{display:block} /* 手机端：右栏不再等高拉伸，恢复普通块流 */
+    .gmap-tag{display:inline-flex}
+  }
+  @media (max-width:560px){
+    .hero-map{width:100%;flex:none}
+    .a-head h2{font-size:21px}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+
+  /* ===== 行程导览扩展样式 ===== */
+  /* 日程导航栏（替代城市导航栏）：D1..D12 跳转各天页 + 总览。
+     不固定（position:static），避免遮挡下方的景点标签栏；手机端亦不固定。 */
+  nav.daytabs{position:static;z-index:1;background:linear-gradient(135deg,#2f6df0,#6aa0ff);
+    border-bottom:1px solid rgba(255,255,255,.25)}
+  nav.daytabs .wrap{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 20px}
+  nav.daytabs a{font-size:12.5px;padding:5px 11px;border:1px solid rgba(255,255,255,.45);border-radius:999px;
+    color:#fff;background:rgba(255,255,255,.14);white-space:nowrap;transition:all .15s}
+  nav.daytabs a:hover{border-color:#fff;background:rgba(255,255,255,.28)}
+  nav.daytabs a.active{background:#fff;color:var(--accent);border-color:#fff;font-weight:700}
+  nav.daytabs a.home{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.55)}
+  nav.daytabs a.home:hover{background:rgba(255,255,255,.36)}
+  nav.daytabs .dt-sep{width:1px;height:18px;background:rgba(255,255,255,.35);margin:0 2px}
+  /* 沿途备注卡（取车/停车/超市/住宿/起点等） */
+  .note-card{display:flex;gap:12px;align-items:flex-start;padding:13px 18px;margin:10px 0;
+    border:1px dashed #c9d4e6;background:#f7faff;border-radius:12px}
+  .note-card .ni{font-size:18px;line-height:1.2;flex:0 0 auto}
+  .note-card .nt{font-size:14.5px;color:#33404f}
+  .note-card .nt b{color:var(--accent)}
+  /* 缺失景点占位卡 */
+  .attraction.placeholder .a-intro{color:var(--muted);font-style:italic}
+  .ph-note{display:inline-block;margin-top:10px;font-size:12.5px;color:#b9791b;
+    background:#fff4e0;border:1px solid #f0d49a;border-radius:999px;padding:3px 10px}
+  /* 物流简化卡（停车/取车） */
+  .attraction.logistics .a-head h2{font-size:22px}
+  .attraction.logistics .right .mapcard{gap:0}
+  .attraction.logistics .right .map-frame{min-height:260px}
+  @media (max-width:1000px){
+    .attraction.logistics{flex-direction:column}
+    .attraction.logistics .right{width:100%;flex:none}
+  }
+  @media (max-width:760px){
+    .attraction.logistics .right .map-frame{height:240px;min-height:0}
+  }
+  /* ===== 首页总览（仿景点搜罗首页：卡片网格） ===== */
+  /* 首页隐藏单日 hero 地图（总览不需要定位地图），hero 改为纵向左对齐 */
+  body.home .hero{padding:34px 0 26px}
+  body.home .hero-map{display:none}
+  body.home .hero-body{flex-direction:column;align-items:flex-start;gap:6px}
+  body.home .hero h1{font-size:30px}
+  body.home p.intro{opacity:.96}
+  /* 返回顶部浮钮（与景点搜罗首页一致） */
+  .totop{position:fixed;right:20px;bottom:20px;width:46px;height:46px;border-radius:50%;border:none;
+    background:var(--accent);color:#fff;cursor:pointer;z-index:600;opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .15s,background .15s;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    box-shadow:0 8px 22px rgba(20,40,80,.30)}
+  .totop .arw{font-size:18px;line-height:1;margin-top:2px}
+  .totop .lbl{font-size:10px;line-height:1;margin-top:1px}
+  .totop.show{opacity:1;pointer-events:auto}
+  .totop:hover{transform:translateY(-2px);background:#1f5ad6}
+  /* 首页区块标题（仿景点搜罗「全部城市」） */
+  .day-sec-t{font-size:20px;margin:24px 0 16px;display:flex;align-items:center;gap:10px}
+  .day-sec-t .ct{font-size:13px;font-weight:700;color:#fff;background:var(--accent);border-radius:999px;padding:2px 12px}
+  /* 日程卡片网格 */
+  .day-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .day-card{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px;box-shadow:0 6px 24px rgba(20,40,80,.06);transition:transform .15s,box-shadow .15s,border-color .15s;
+    text-decoration:none;color:inherit}
+  .day-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(20,40,80,.12);border-color:var(--accent)}
+  .dc-logo{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;font-weight:800;color:#fff;flex:0 0 auto;box-shadow:0 6px 16px rgba(0,0,0,.14);line-height:1.1;text-align:center}
+  .dc-body{flex:1;min-width:0}
+  .dc-day{font-size:17px;font-weight:800;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-date{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .dc-chain{margin-top:7px;font-weight:700;color:var(--accent);font-size:14.5px;line-height:1.45}
+  .dc-chain .arr{color:var(--accent);margin:0 4px;font-weight:400}
+  .dc-hotel{font-size:12.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-prev{font-size:12.5px;color:#46566a;margin-top:6px;line-height:1.6;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* 首页主体留白（hero 与卡片网格之间） */
+  body.home #list{padding-top:6px;padding-bottom:30px}
+  /* 手机端：日程网格单列、hero 字号收敛，保证可读性 */
+  @media (max-width:620px){
+    .day-grid{grid-template-columns:1fr}
+    .day-sec-t{font-size:18px;margin:18px 0 14px}
+    .dc-logo{width:48px;height:48px;font-size:15px}
+    .dc-day{font-size:16px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="daytabs"><div class="wrap"><a href="index.html" class="home">总览</a><span class="dt-sep"></span><a href="D01.html">D1</a><a href="D02.html">D2</a><a href="D03.html">D3</a><a href="D04.html">D4</a><a href="D05.html" class="active">D5</a><a href="D06.html">D6</a><a href="D07.html">D7</a><a href="D08.html">D8</a><a href="D09.html">D9</a><a href="D10.html">D10</a><a href="D11.html">D11</a><a href="D12.html">D12</a></div></nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-body">
+      <div class="hero-text">
+        <div class="flag" id="flag">📍</div>
+        <h1 id="cityTitle">加载中…</h1>
+        <div class="region" id="region"></div>
+        <p class="intro" id="cityIntro"></p>
+      </div>
+      <div class="hero-map">
+        <iframe id="cityMap" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- 顶部标签栏：各景点选择状态 chip（蓝色=已选、灰色=未选），点击跳转；右侧为「保存更改」按钮 -->
+<nav class="toc"><div class="wrap">
+  <div class="chips" id="chips"></div>
+  <button id="saveBtn" class="save-btn" type="button" onclick="saveSelection()">保存</button>
+</div></nav>
+
+<main class="wrap deck" id="list"></main>
+
+<footer>
+  本页由「国家 + 城市 → 景点导览」工作流程生成 · 地图为 Google Maps 嵌入<br>
+  每个景点展示 6 张来自 Wikimedia Commons 的真实照片（非 AI 生成）；评分与评论为基于游客反馈整理的代表性摘要<br>
+  点击景点标题右侧的「入内参观 / 外部参观」可在三种状态间切换来规划行程（入内参观 ✓ / 外部参观 ○ / 不参观）；状态同步到顶部标签栏（入内参观=蓝色，外部参观=淡蓝色，未选=灰色）；切换后点标签栏右侧「保存」把选择存入本机浏览器（localStorage），下次打开自动恢复（仅本浏览器/设备生效）。
+</footer>
+
+<!-- 机器可读的选择状态：其它 skill 渲染本页后可直接读取此 JSON -->
+<script type="application/json" id="taf-selection">{}</script>
+
+<div class="lb" id="lightbox"><span class="close" onclick="closeLb()">×</span><img id="lbImg" src="" alt=""></div>
+<div class="toast" id="toast"></div>
+<button class="totop" id="toTop" title="返回顶部" aria-label="返回顶部"><span class="arw">↑</span><span class="lbl">顶部</span></button>
+
+<script>
+/* =========================================================================
+   可复用数据块 —— 新建一座城市时，只需替换下面这个 DATA 对象。
+   城市规模对应景点数：小城市 15 个 / 中城市 20 个 / 大城市 30 个（可含「周边」景点，兼顾网红打卡地）。「周边」指驾车 1 小时以内可达的邻近城镇/景点；超过 1 小时车程的远途（如霍亨索伦城堡）不计入。
+   字段说明：
+     flag          国旗 emoji，如 🇩🇪 🇫🇷 🇯🇵 🇺🇸
+     country       国家（中文）
+     countryEn     国家英文名（用于页头地图，更稳定）
+     city          城市（中文）
+     cityEn        城市英文名（用于页头地图，更稳定）
+     region        地区/州省（可选）
+     intro         城市一句话简介
+     mapZoom       城市在国家中位置地图的缩放级别（默认 5，大国如美国用 4）
+     attractions[] 景点数组，每个景点：
+       id          英文锚点 id（用于目录跳转，保持唯一）
+       name        中文名
+       nameEn      英文名
+       tag         一句话标签
+       selected    是否「准备参观」——布尔值（兼容旧数据）；v2.1 起推荐用 visit 字段表达三态：visit:"inside" 入内参观 / "outside" 外部参观 / 缺省或 null 不参观。渲染与存档均兼容旧布尔 selected（true→inside，false→不参观）
+       rating      评分 0–5（数字），查不到填 null
+       reviews     评价数量（数字），查不到填 null
+       ratingSource 评分来源（如 Tripadvisor / Google）
+       mapQuery    地图检索词（地点名或地址，用于右侧 Google 地图）
+       intro       文字介绍，约 200 个汉字：涵盖历史由来、核心看点、游览体验与适合人群，避免一句话带过
+       hours       开放时间（写具体）：每周各日时段、闭馆日、最晚入场、特殊日期（如圣诞节/跨年）调整
+       price       票价（分档列出）：成人 / 优惠(学生·老人·残障) / 儿童 / 家庭票，注明免费人群与本地卡折扣
+       duration    建议游览时长，如 "约 2–3 小时"（可选）
+       tips         实用贴士，如最佳时段、交通、是否需预约（可选）
+       photos      6 张真实照片 URL 数组（来自 Wikimedia Commons，浏览器直接加载，无需下载；缺图景点可用其它同城真实照片补足）
+       reviewList  5 条代表性游客评论，须为对象数组：{t:"评论文字", type:"good"|"neutral"|"bad"}；每景点固定为 2 条好评 + 1 条中评 + 2 条差评
+   照片说明：本工作流不使用 AI 生成图，而是从网络取真实照片。
+选择状态说明：v2.1 起为三态——visit:"inside" 入内参观 / "outside" 外部参观 / 缺省(或 null) 不参观（兼容旧布尔 selected：true→inside，false→不参观）；
+  用户点击标题右侧按钮在三种状态间循环切换；状态会同步到顶部标签栏（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）、写入卡片 data-visit / data-selected 属性、写入 #taf-selection JSON，便于其它 skill 读取；标签栏只保留选择状态 chip，不再显示计数与复制按钮。
+  选取状态默认以 DATA.visit（或兼容的 DATA.selected）为准；点击「保存」后写入本机浏览器 localStorage（按城市隔离，存为 {states:{id:visit}}），下次打开自动恢复——仅本浏览器/设备生效，不写入文件。
+   ========================================================================= */
+const DATA = {
+  "flag": "🇩🇪",
+  "country": "德国",
+  "countryEn": "Germany",
+  "city": "第5天",
+  "cityEn": "",
+  "region": "2026-10-04 周日",
+  "intro": "",
+  "mapZoom": 5,
+  "_storeKey": "taf-itin-D05",
+  "_dayNum": 5,
+  "_allCities": [
+    {
+      "cn": "特里贝格",
+      "en": "Triberg im Schwarzwald"
+    },
+    {
+      "cn": "林道",
+      "en": "Lindau"
+    }
+  ],
+  "_date": "2026-10-04",
+  "_weekday": "周日",
+  "attractions": [
+    {
+      "id": "waterfalls",
+      "name": "特里贝格瀑布",
+      "nameEn": "Triberger Wasserfälle",
+      "tag": "自然奇观 · 德国最高瀑布（落差 163 米）",
+      "selected": true,
+      "rating": 4,
+      "reviews": 2049,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Triberger Wasserfälle, Hauptstraße 85, Triberg im Schwarzwald",
+      "intro": "特里贝格瀑布是德国落差最大、可达性最好的瀑布之一，自 1880 年代起便是黑森林最负盛名的自然胜景。古塔赫河（Gutach）的水流在七级台阶上奔泻 163 米直落谷底，终年不息，水声轰鸣。沿木质“之”字形栈道可一路攀至瀑顶，沿途设有科普解说牌，还能遇见不怕人的松鼠；瀑布夜间亮灯至 22:00，雾气弥漫时尤为梦幻。冬季结冰别具冷冽之美，夏季水量丰沛最为壮观，是串联半日游的核心，也适合亲子与摄影爱好者造访。",
+      "hours": "全年开放；售票/验票时间约 09:00–19:00（冬季 11 月–3 月略短，约 09:30–17:30）。瀑布夜间亮灯至 22:00。冬季部分路段会结冰，需注意安全，建议穿防滑鞋。",
+      "price": "夏季成人 €9.00（持 Triberg 游客卡 €8.50）；冬季成人 €7.00（持游客卡 €6.50）；6 岁以下儿童免费；家庭票 €20（夏）/ €16（冬）。持瀑布门票可免费进入黑森林博物馆与 Triberg-Fantasy。",
+      "duration": "约 1–1.5 小时",
+      "tips": "建议上午或傍晚前往，光线最佳且避开团队客流；可购联票串联博物馆与 Fantasy。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/Geotop_Triberger_Wasserf%C3%A4lle.jpg/960px-Geotop_Triberger_Wasserf%C3%A4lle.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Triberg_Wasserfalle.jpg/960px-Triberg_Wasserfalle.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/Triberger_Wasserf%C3%A4lle_%2814858170003%29.jpg/960px-Triberger_Wasserf%C3%A4lle_%2814858170003%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Triberger_Wasserf%C3%A4lle_%28Triberg_im_Schwarzwald%29.jpg/960px-Triberger_Wasserf%C3%A4lle_%28Triberg_im_Schwarzwald%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Triberger_Wasserf%C3%A4lle_2018-04-17_%281%29.jpg/960px-Triberger_Wasserf%C3%A4lle_2018-04-17_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/Triberger_Wasserf%C3%A4lle_2018-04-17_%282%29.jpg/960px-Triberger_Wasserf%C3%A4lle_2018-04-17_%282%29.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "沿着木栈道一路向上，163 米的落差非常壮观，水声轰鸣很震撼。",
+          "type": "good"
+        },
+        {
+          "t": "森林里的瀑布步道负氧离子满满，徒步体验很治愈。",
+          "type": "good"
+        },
+        {
+          "t": "台阶多且湿滑，雨天走路要格外小心。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季人挤人，观景台要排队才能拍照。",
+          "type": "bad"
+        },
+        {
+          "t": "门票偏贵，纯看瀑布的话停留时间不长。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "museum",
+      "name": "黑森林博物馆",
+      "nameEn": "Schwarzwaldmuseum",
+      "tag": "文化历史 · 欧洲最大筒风琴收藏之一",
+      "selected": true,
+      "rating": 4,
+      "reviews": 227,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Schwarzwaldmuseum Triberg, Wallfahrtstraße 4, Triberg",
+      "intro": "黑森林博物馆始建于 1873 年，是德国历史最悠久的民俗博物馆之一，生动呈现黑森林地区数百年的生活面貌与匠人精神。馆内藏有欧洲规模最大的筒风琴（Drehorgel）收藏之一，并展出各地传统服饰（Trachten）、木雕、草编工艺与黑森林铁路微缩模型。这里也是了解布谷鸟钟与黑森林手工艺起源的最佳去处，现场常有筒风琴演奏，氛围热闹温馨。持游客卡常可优惠或免费，建议与瀑布、千钟屋安排在同一天，慢慢逛约需一个半小时。",
+      "hours": "5–10 月每日 10:00–18:00；11–4 月每日 10:00–17:00（淡季周一常休，建议出行前确认官网）。",
+      "price": "成人约 €5.00（不同来源标注 €5–7；持 Triberg / Guest Card 常可免费或优惠，学生与儿童更低）。",
+      "duration": "约 1–1.5 小时",
+      "tips": "持游客卡常可优惠或免费；馆内筒风琴演奏时段最值得停留。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Landappbw_1165801_1819_schwarzwaldmuseum_Triberg.jpg/960px-Landappbw_1165801_1819_schwarzwaldmuseum_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/Schwarzwald_museum%2C_Triberg.JPG/960px-Schwarzwald_museum%2C_Triberg.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Schwarzwaldmuseum_in_Triberg.jpg/960px-Schwarzwaldmuseum_in_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/9/97/Schwarzwaldmuseum_in_triberg.png",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Triberg%2C_Germany_2023-06-28.jpg/960px-Triberg%2C_Germany_2023-06-28.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Triberg_im_Schwarzwald.JPG/960px-Triberg_im_Schwarzwald.JPG"
+      ],
+      "reviewList": [
+        {
+          "t": "筒风琴收藏太精彩了，现场演奏时整个馆都很热闹。",
+          "type": "good"
+        },
+        {
+          "t": "从布谷鸟钟到民俗服饰，黑森林文化讲得系统。",
+          "type": "good"
+        },
+        {
+          "t": "展品偏静态，带小朋友可能觉得稍闷。",
+          "type": "neutral"
+        },
+        {
+          "t": "部分说明牌只有德文，外语游客吃力。",
+          "type": "bad"
+        },
+        {
+          "t": "馆不算大，细看一小时也就够了。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "fantasy",
+      "name": "Triberg-Fantasy（Instagram 博物馆）",
+      "nameEn": "Triberg-Fantasy",
+      "tag": "网红打卡 · 主题拍照",
+      "selected": true,
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "暂无公开评分",
+      "mapQuery": "Triberg-Fantasy, Hauptstraße 76, Triberg",
+      "intro": "Triberg-Fantasy 是一座充满幻想色彩的“Instagram 博物馆”，以明亮鲜艳的主题布景鼓励游客拍出好看的大片并即时分享。展区分多个梦幻房间，色彩与镜面交错，适合亲子与摄影爱好者尽情发挥创意。它常与瀑布联票参观：凭瀑布门票可免费入场，是瀑布之后轻松补充的拍照据点。整个空间不大，约半小时即可逛完，室内光线充足、手机就能出片，是年轻人和家庭在黑森林里留下回忆的轻松一站。",
+      "hours": "每日 11:00–18:00（冬季 11:00–17:00），最晚入场 17:45；周一可能休，建议确认。",
+      "price": "单馆成人 €5.00（持游客卡 €4.50）；6–17 岁 €4.50；6 岁以下免费；持瀑布门票可免费进入。",
+      "duration": "约 30–45 分钟",
+      "tips": "与瀑布联票最划算；室内光线充足，手机即可出片。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/Triberg-Hauptstr-26-Edeka-2025-gje.jpg/960px-Triberg-Hauptstr-26-Edeka-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/79/Triberg-Zauberberg-02-2025-gje.jpg/960px-Triberg-Zauberberg-02-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Triberg-Kreuzstr-Parkhaus-02-2025-gje.jpg/960px-Triberg-Kreuzstr-Parkhaus-02-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Triberg-Kreuzstr-Stadt-St_Clemens-04-2025-gje.jpg/960px-Triberg-Kreuzstr-Stadt-St_Clemens-04-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Triberg-Kreuzstr-Stadt-St_Clemens-06-2025-gje.jpg/960px-Triberg-Kreuzstr-Stadt-St_Clemens-06-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Triberg-Hauptstr-24-Nr63-2025-gje.jpg/960px-Triberg-Hauptstr-24-Nr63-2025-gje.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "色彩鲜艳的布景特别适合拍照，很出片。",
+          "type": "good"
+        },
+        {
+          "t": "镜子与光影装置梦幻，年轻人爱打卡。",
+          "type": "good"
+        },
+        {
+          "t": "内容偏网红，深度一般，看个人喜好。",
+          "type": "neutral"
+        },
+        {
+          "t": "空间不大，门票性价比略低。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季要排队进场，拍照还得等人散。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "haus1000",
+      "name": "千钟屋（House of 1000 Clocks）",
+      "nameEn": "Haus der 1000 Uhren",
+      "tag": "钟表世界 · 黑森林布谷鸟钟大卖场",
+      "selected": true,
+      "rating": 4.5,
+      "reviews": 1312,
+      "ratingSource": "Tripadvisor / 旅游站",
+      "mapQuery": "Haus der 1000 Uhren, Hauptstraße 79-81, Triberg",
+      "intro": "千钟屋是特里贝格最著名的布谷鸟钟卖场与展示空间，600 多平方米内陈列近 2000 款黑森林布谷鸟钟、挂钟与座钟，从传统手工到现代设计应有尽有。门前的“特里贝格熊（TRIBÄR）”家族每刻钟随音乐变换造型，已成为黑森林的标志性市标。店内提供友好的钟表科普与选购服务，即使不购物也值得参观。这里是了解黑森林钟表文化的窗口，店员会耐心讲解机械原理，带小朋友来既长知识又好玩。",
+      "hours": "周一至周日 10:00–17:30（周三部分来源显示休，建议出行前确认；旺季可能延长）。",
+      "price": "免费参观（布谷鸟钟卖场/展厅；购物自选）。",
+      "duration": "约 30 分钟–1 小时",
+      "tips": "门口特里贝格熊每刻钟变换造型，可掐点拍照；店员可讲解钟表原理，适合亲子。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/54/Haus_der_1000_Uhren_in_Triberg_-_panoramio.jpg/960px-Haus_der_1000_Uhren_in_Triberg_-_panoramio.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Landappbw_328394_1822_Gesch%C3%A4ftshaus_Haus_der_1000_Uhren_Triberg.jpg/960px-Landappbw_328394_1822_Gesch%C3%A4ftshaus_Haus_der_1000_Uhren_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Landappbw_328396_1822_Gesch%C3%A4ftshaus_Haus_der_1000_Uhren_Triberg.jpg/960px-Landappbw_328396_1822_Gesch%C3%A4ftshaus_Haus_der_1000_Uhren_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Triberg_im_Schwarzwald_%281%29.JPG/960px-Triberg_im_Schwarzwald_%281%29.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/Triberg_im_Schwarzwald_%282%29.JPG/960px-Triberg_im_Schwarzwald_%282%29.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Triberg%2C_VS_-_Wallfahrtstr_-_Triberg_v_W.jpg/960px-Triberg%2C_VS_-_Wallfahrtstr_-_Triberg_v_W.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "整面墙的布谷鸟钟非常壮观，视觉冲击力很强。",
+          "type": "good"
+        },
+        {
+          "t": "从小钟到巨钟琳琅满目，钟表迷会挪不动脚。",
+          "type": "good"
+        },
+        {
+          "t": "本质是个大钟表卖场，购物属性明显。",
+          "type": "neutral"
+        },
+        {
+          "t": "价格偏高，纯逛不买略显尴尬。",
+          "type": "bad"
+        },
+        {
+          "t": "人流大时店员顾不过来，体验下降。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-5-1",
+      "name": "特里贝格 H-Apartments",
+      "nameEn": "",
+      "tag": "物流 · 取车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "取车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "特里贝格 H-Apartments"
+    },
+    {
+      "id": "cuckoo",
+      "name": "世界最大布谷鸟钟（Eble 钟表公园）",
+      "nameEn": "Weltgrößte Kuckucksuhr · Eble Uhren-Park",
+      "tag": "地标打卡 · 吉尼斯世界纪录",
+      "selected": true,
+      "rating": 3.5,
+      "reviews": 221,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Eble Uhren-Park, Schonachbach 27, 78098 Triberg",
+      "intro": "这座由钟表匠 Ewald 与 Ralf Eble 于 1989–1994 年按传统图纸放大 60 倍打造的布谷鸟钟，自 1997 年起载入吉尼斯世界纪录。钟体高 4.5 米、重 6 吨，布谷鸟重 150 公斤，钟摆长 8 米，每半小时鸣叫一次，声传山谷。游客可走入钟体内部一窥齿轮机械结构，外围还有逾 1000 平方米的手工布谷鸟钟卖场。这里是特里贝格最上镜的打卡点，也是带小朋友认识钟表工艺的生动课堂，每半点的报时仪式都值得驻足。园区周边绿意环绕，逛完还能在咖啡馆品尝黑森林蛋糕，是轻松又难忘的一站。",
+      "hours": "复活节–10 月底：周一至周日 10:00–18:00；11 月–复活节：周一至周六 10:00–17:30，周日 11:00–17:00。入内参观最晚于闭馆前 30 分钟截止。",
+      "price": "入内参观巨钟约 €3–4（从外部观赏免费）；10 岁以下儿童免费。",
+      "duration": "约 45 分钟–1 小时",
+      "tips": "每半点布谷鸟报时最热闹，建议掐点前往；外围商店可挑选正宗黑森林钟。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Triberg-Bahnerlebnispfad-112-Eble_Uhren-Park-Kuckucksuhr-2025-gje.jpg/960px-Triberg-Bahnerlebnispfad-112-Eble_Uhren-Park-Kuckucksuhr-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/Triberg-Bahnerlebnispfad-146-Vierbahnenblick-Eble_Uhren-Park-2025-gje.jpg/960px-Triberg-Bahnerlebnispfad-146-Vierbahnenblick-Eble_Uhren-Park-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Triberg-Bahnerlebnispfad-176-oberer_Dreibahnenblick-Eble_Uhren-Park-2025-gje.jpg/960px-Triberg-Bahnerlebnispfad-176-oberer_Dreibahnenblick-Eble_Uhren-Park-2025-gje.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Landappbw_771458_1822_Kuckucksuhr_Geb%C3%A4uder%C3%BCckseite_Triberg.jpg/960px-Landappbw_771458_1822_Kuckucksuhr_Geb%C3%A4uder%C3%BCckseite_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Landappbw_771468_1822_Kuckucksuhr_Triberg.jpg/960px-Landappbw_771468_1822_Kuckucksuhr_Triberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Weltgr%C3%B6sste_Kuckucksuhr_-_World%27s_Biggest_Cuckoo_Clock_-_panoramio.jpg/960px-Weltgr%C3%B6sste_Kuckucksuhr_-_World%27s_Biggest_Cuckoo_Clock_-_panoramio.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "巨钟真的很大，站在旁边觉得自己很渺小。",
+          "type": "good"
+        },
+        {
+          "t": "整点报时表演有趣，孩子看得入神。",
+          "type": "good"
+        },
+        {
+          "t": "本质是个大钟表加纪念品店，期待别太高。",
+          "type": "neutral"
+        },
+        {
+          "t": "门票和店内消费绑得紧，购物感偏强。",
+          "type": "bad"
+        },
+        {
+          "t": "排队进场时有点混乱，引导不够清晰。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "titisee",
+      "name": "蒂蒂湖（Titisee）",
+      "nameEn": "Titisee",
+      "tag": "周边一日游 · 黑森林最大天然湖",
+      "selected": true,
+      "rating": 4,
+      "reviews": 3500,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Titisee, Schwarzwald",
+      "intro": "蒂蒂湖（Titisee）是黑森林地区最大的天然湖，由冰川作用形成，湖水清澈见底、四周被密林与山峦环抱，是德国最经典的疗养湖区之一。这里可乘蒸汽小轮游湖、划船、环湖徒步，湖畔小镇以黑森林钟、布谷鸟钟与时钟蛋糕甜点闻名。冬季湖面偶结冰，夏季则是戏水与疗养胜地。无论是全家放松、情侣散步还是摄影打卡都合适，从特里贝格乘火车约四十分钟，建议预留半天，湖畔平坦步道对推车与老人也很友好。",
+      "hours": "湖区全天开放；游船（Dampfschiff）约 4–10 月 10:00–17:00 发船，冬季停运；小镇店铺多 10:00–18:00。",
+      "price": "环湖免费；游船成人约 €9–12、儿童半价；租船另计；小镇逛街免费。",
+      "duration": "约半天（3–4 小时）",
+      "tips": "从特里贝格乘火车约 40 分钟；湖畔步道平坦适合亲子，可顺访周边钟表店。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/10_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg/960px-10_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/1_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg/960px-1_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/2_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg/960px-2_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/4_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg/960px-4_of_10_-_Lake_Titisee%2C_Black_Forest_-_GERMANY.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Black_Forest_Lake_Titisee_%289812968523%29.jpg/960px-Black_Forest_Lake_Titisee_%289812968523%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/eb/Titisee_mit_Morgennebel.jpg/960px-Titisee_mit_Morgennebel.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "湖水特别清澈，环湖散步非常舒服。",
+          "type": "good"
+        },
+        {
+          "t": "可玩项目多，游船划船加徒步都能安排。",
+          "type": "good"
+        },
+        {
+          "t": "湖区商业味渐浓，旺季略喧嚣。",
+          "type": "neutral"
+        },
+        {
+          "t": "停车难，节假日车位一位难求。",
+          "type": "bad"
+        },
+        {
+          "t": "游船等项目另收费，家庭花销不低。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-5-2",
+      "name": "Ferienwohnung Lemon Grass",
+      "nameEn": "",
+      "tag": "物流 · 停车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "停车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Ferienwohnung Lemon Grass"
+    },
+    {
+      "name": "圣玛丽亚教堂",
+      "nameEn": "Münster Unserer Lieben Frau (St. Marien)",
+      "tag": "哥特式主教座堂 · 老城制高点",
+      "selected": true,
+      "intro": "圣玛丽亚教堂（Münster Unserer Lieben Frau）是林道老城的主教座堂，也是博登湖地区晚期哥特式建筑的代表作。教堂始建于约13世纪，历经数百年增建，高耸的西塔与繁复的网状拱顶令人屏息。内部以精美的彩绘玻璃窗、巴洛克讲道坛与庄重的中殿著称，祭坛与圣人雕像细节考究。作为林道天际线的核心，它静静俯瞰着港口与湖面，是信徒祈祷与旅人仰望的所在，也是诺贝尔得主会议期间城市的象征性背景。",
+      "hours": "通常每日约 09:00–18:00 开放（弥撒与节庆可能临时调整）；登塔视季节安排。",
+      "price": "入内免费；讲解导览约 €3；登塔（若有）约 €2。",
+      "duration": "约 30–45 分钟",
+      "tips": "西塔是老城最高点，傍晚逆光拍摄教堂轮廓最出片；入内需着装得体、保持安静。",
+      "mapQuery": "Lindau Minster, Lindau",
+      "rating": 4.5,
+      "reviews": 2100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "哥特式拱顶太美，彩窗透光那一刻很神圣。",
+          "type": "good"
+        },
+        {
+          "t": "西塔是老城制高点，外观就很震撼。",
+          "type": "good"
+        },
+        {
+          "t": "内部偏朴素，期待金碧辉煌的可能略失望。",
+          "type": "neutral"
+        },
+        {
+          "t": "弥撒时段不让参观，得避开礼拜来。",
+          "type": "bad"
+        },
+        {
+          "t": "登塔楼梯窄，带小孩不太方便。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_62.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_62.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_63-65_HDR.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_63-65_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_66-68_HDR.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_66-68_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_69-71_HDR.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_69-71_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_72-74_HDR.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_72-74_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_75-77_HDR.jpg/960px-Minster_de_Nuestra_Querida_Se%C3%B1ora%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_75-77_HDR.jpg"
+      ],
+      "id": "st-marien",
+      "visit": "inside"
+    },
+    {
+      "name": "集市广场",
+      "nameEn": "Marktplatz",
+      "tag": "老城核心广场 · 市井烟火",
+      "selected": true,
+      "intro": "集市广场（Marktplatz）是林道老城的核心广场，四周被色彩明快的市民住宅与带凸窗的老建筑环抱，中央立着带山墙的旧 Hauptwache（警卫屋）与带有历史浮雕的喷泉。这里自中世纪起便是商贩集散、节庆聚会之地，今天依旧保留着市井烟火气：咖啡馆露天座、花店与纪念品铺子沿广场铺开。站在广场中央抬头，能同时看到圣玛丽亚教堂的西塔与旧市政厅的湿壁画山墙，是感受林道日常节奏的最佳一站。",
+      "hours": "广场全天开放、免费；周边商铺约 09:00–18:00；周末更热闹。",
+      "price": "免费。",
+      "duration": "约 30–45 分钟",
+      "tips": "上午光线柔和、人少好拍照；广场咖啡馆坐下来看人来人往最惬意。",
+      "mapQuery": "Marktplatz, Lindau",
+      "rating": 4.3,
+      "reviews": 1500,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "彩色房子围着的广场很可爱，坐咖啡馆发呆舒服。",
+          "type": "good"
+        },
+        {
+          "t": "旧警卫屋的山墙细节满满，值得细看。",
+          "type": "good"
+        },
+        {
+          "t": "规模不大，逛一圈半小时足够。",
+          "type": "neutral"
+        },
+        {
+          "t": "旅游季人挤人，想拍空镜得赶早。",
+          "type": "bad"
+        },
+        {
+          "t": "周边餐饮偏贵，性价比一般。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Lindau%2C_Marktplatz_4-001.jpg/960px-Lindau%2C_Marktplatz_4-001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5d/Lindau%2C_Marktplatz_7-001.jpg/960px-Lindau%2C_Marktplatz_7-001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Lindau%2C_Marktplatz_mit_Hotel_und_Gasthof_Stift.jpg/960px-Lindau%2C_Marktplatz_mit_Hotel_und_Gasthof_Stift.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Lindau_-_Marktplatz_%2826870965070%29.jpg/960px-Lindau_-_Marktplatz_%2826870965070%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7d/Marktplatz_%28Lindau%29_jm67476.jpg/960px-Marktplatz_%28Lindau%29_jm67476.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Marktplatz_7_Hauptwache_Lindau-1.jpg/960px-Marktplatz_7_Hauptwache_Lindau-1.jpg"
+      ],
+      "id": "market-square",
+      "visit": "inside"
+    },
+    {
+      "name": "卡瓦岑之家市博物馆",
+      "nameEn": "Haus zum Cavazzen (Stadtmuseum)",
+      "tag": "巴洛克市民宅邸 · 市博物馆",
+      "selected": true,
+      "intro": "卡瓦岑之家（Haus zum Cavazzen）是林道集市广场上最华美的市民住宅之一，建于1740年代，由富商约翰·克里斯托夫·古德纳建造，是巴伐利亚晚期巴洛克市民建筑的珍宝。立面以精湛的湿壁画与雕饰山墙著称，内部则辟为林道市博物馆（Stadtmuseum），陈列湖区的历史、渔民生活、船模与借由诺贝尔奖得主会议发展的科学城故事。登临上层窗台，可俯瞰集市广场与圣玛丽亚教堂的尖塔，是读懂林道市民阶层审美与城市记忆的窗口。",
+      "hours": "博物馆约周二至周日 11:00–17:00（周一闭馆）；节庆日可能调整，去前查官网。",
+      "price": "成人约 €5；优惠（学生·老人）约 €3.5；12 岁以下免费。",
+      "duration": "约 1 小时",
+      "tips": "上层窗台俯瞰广场角度绝佳；常设展小巧，搭配特展一起看更值。",
+      "mapQuery": "Haus zum Cavazzen, Lindau",
+      "rating": 4.3,
+      "reviews": 620,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "巴洛克立面美炸，里面小展也讲得清楚林道历史。",
+          "type": "good"
+        },
+        {
+          "t": "二楼窗台看集市广场的角度太绝了。",
+          "type": "good"
+        },
+        {
+          "t": "展陈规模不大，半小时能看完。",
+          "type": "neutral"
+        },
+        {
+          "t": "闭馆日多，周一别白跑。",
+          "type": "bad"
+        },
+        {
+          "t": "门票略贵，纯外观党可能觉得不值。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/20250525_xl_1438-Cavazzen.jpg/960px-20250525_xl_1438-Cavazzen.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Cavazzen_circa_1910.jpg/960px-Cavazzen_circa_1910.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Das_Haus_zum_Cavazzen_%28Stadtmuseum%29.jpg/960px-Das_Haus_zum_Cavazzen_%28Stadtmuseum%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Haus_zum_Cavazzen_Sanierung_20230706_110455.jpg/960px-Haus_zum_Cavazzen_Sanierung_20230706_110455.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Lindau_Cavazzen_Museum_375.jpg/960px-Lindau_Cavazzen_Museum_375.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/03/Marktplatz_6_Haus_zum_Cavazzen_Lindau-1.jpg/960px-Marktplatz_6_Haus_zum_Cavazzen_Lindau-1.jpg"
+      ],
+      "id": "cavazzen",
+      "visit": "outside"
+    },
+    {
+      "name": "旧市政厅",
+      "nameEn": "Altes Rathaus (Old Town Hall)",
+      "tag": "哥特市政厅 · 中世纪地牢",
+      "selected": true,
+      "intro": "纽伦堡旧市政厅坐落于老城佩格尼茨河畔，由一座哥特式建筑（1332–1340）与文艺复兴风格的『新』楼组成，曾是帝国自由市议政与司法的核心。院内通往著名的『大审讯厅』地下监狱，保存着中世纪刑讯室原貌；建筑石雕与回廊尽显昔日市政权威与司法的威严。",
+      "hours": "外观全天可看；地下监狱导览约 10:00–17:00（冬季缩短），需购票入内。",
+      "price": "地下监狱导览约 €4–5。",
+      "duration": "约 0.5–1 小时",
+      "tips": "地下监狱阴冷潮湿，注意保暖；讲解含历史轶事很精彩。",
+      "mapQuery": "Altes Rathaus, Nuremberg",
+      "rating": 4.3,
+      "reviews": 3200,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "地下监狱讲解很有代入感。",
+          "type": "good"
+        },
+        {
+          "t": "哥特式立面细节很耐看。",
+          "type": "good"
+        },
+        {
+          "t": "导览时间固定，得掐点去。",
+          "type": "neutral"
+        },
+        {
+          "t": "楼梯陡，老人上下不便。",
+          "type": "bad"
+        },
+        {
+          "t": "内部展陈偏朴素，期待高的会失望。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0c/D-5-64-000-1589_Rathaus%2C_gotischer_Bau_N%C3%BCrnberg_20241020_0196.jpg/960px-D-5-64-000-1589_Rathaus%2C_gotischer_Bau_N%C3%BCrnberg_20241020_0196.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/D-5-64-000-1589_Rathaus%2C_gotischer_Bau_N%C3%BCrnberg_20241020_0197.jpg/960px-D-5-64-000-1589_Rathaus%2C_gotischer_Bau_N%C3%BCrnberg_20241020_0197.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/N%C3%BCrnberg%2C_Altes_Rathaus%2C_Portal.jpg/960px-N%C3%BCrnberg%2C_Altes_Rathaus%2C_Portal.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/N%C3%BCrnberg_Altes_Rathaus_1.jpg/960px-N%C3%BCrnberg_Altes_Rathaus_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/Rathaus_N%C3%BCrnberg_003.JPG/960px-Rathaus_N%C3%BCrnberg_003.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Rathaus_N%C3%BCrnberg_004.JPG/960px-Rathaus_N%C3%BCrnberg_004.JPG"
+      ],
+      "id": "altes-rathaus",
+      "visit": "inside"
+    },
+    {
+      "name": "马克西米利安街",
+      "nameEn": "Maximilianstraße",
+      "tag": "老城主轴步行街 · 通往港口",
+      "selected": true,
+      "intro": "马克西米利安街（Maximilianstraße）是林道老城的主轴商业街，自集市广场笔直延伸向湖港方向，两侧排布着色彩明快、凸窗精致的市民住宅与精品店、咖啡馆。它是林道最热闹的步行脉络：白天游人如织，橱窗里摆着博登湖特产、瑞士钟表与手作纪念品；入夜后灯笼亮起，石板路映着暖光，别有韵味。沿街慢行几分钟即可从老城中心直达港口与灯塔，是购物、闲逛与前往湖边的必经之路。",
+      "hours": "街道全天可通行；商铺约 09:00–18:30（周日部分休息）。",
+      "price": "免费逛街；消费按店铺定价。",
+      "duration": "约 1 小时",
+      "tips": "傍晚灯笼亮起时最有氛围；想避开人潮建议上午；直通港口，顺路不绕。",
+      "mapQuery": "Maximilianstraße, Lindau",
+      "rating": 4.3,
+      "reviews": 1300,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "从广场一路走到港口，沿街房子都很好看。",
+          "type": "good"
+        },
+        {
+          "t": "傍晚灯笼亮起来特别有氛围，逛着很舒服。",
+          "type": "good"
+        },
+        {
+          "t": "就是普通购物街，特产店偏 tourist。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季人挤人，推婴儿车有点难走。",
+          "type": "bad"
+        },
+        {
+          "t": "咖啡馆坐一下不便宜，性价比一般。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Lindau_-_Maximilianstra%C3%9Fe_%2827109701886%29.jpg/960px-Lindau_-_Maximilianstra%C3%9Fe_%2827109701886%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Lindau_-_Maximilianstra%C3%9Fe_%2827138968526%29.jpg/960px-Lindau_-_Maximilianstra%C3%9Fe_%2827138968526%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Lindau_Maximilianstra%C3%9Fe_%289895432746%29.jpg/960px-Lindau_Maximilianstra%C3%9Fe_%289895432746%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Lindau_Maximilianstra%C3%9Fe_01.jpg/960px-Lindau_Maximilianstra%C3%9Fe_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8e/Lindau_Maximilianstra%C3%9Fe_05.jpg/960px-Lindau_Maximilianstra%C3%9Fe_05.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Lindau_Maximilianstra%C3%9Fe_07.jpg/960px-Lindau_Maximilianstra%C3%9Fe_07.jpg"
+      ],
+      "id": "maximilianstrasse",
+      "visit": "inside"
+    },
+    {
+      "name": "圣彼得教堂",
+      "nameEn": "Peterskirche (St. Peter)",
+      "tag": "新教哥特小教堂 · 老管风琴",
+      "selected": true,
+      "intro": "圣彼得教堂（Peterskirche）是林道老城内一座朴素的晚期哥特式新教教堂，紧邻集市广场，与气派的圣玛丽亚大教堂形成鲜明对照。它最早的木构教堂可追溯至中世纪初，现建筑多为15世纪重建，钟楼与山墙保留着老城的轮廓线。内部以一架历史悠久的管风琴（Krell-Orgel）与简洁的木构讲坛见长，没有繁复的装饰，却以安静肃穆的氛围吸引着旅人驻足。周日礼拜时唱诗声回荡，是体会林道日常信仰生活的小众之地。",
+      "hours": "通常周一至周六约 10:00–17:00、周日礼拜后开放；具体以门口告示为准。",
+      "price": "免费入内；管风琴音乐会可能单独售票。",
+      "duration": "约 20–30 分钟",
+      "tips": "与圣玛丽亚教堂只隔几步，可一并参观对比哥特与新教简朴风格；安静时段最佳。",
+      "mapQuery": "Peterskirche, Lindau",
+      "rating": 4.2,
+      "reviews": 780,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "安静肃穆，比大教堂人少，很适合静静坐会儿。",
+          "type": "good"
+        },
+        {
+          "t": "那架老管风琴音色绝了，恰逢排练听到超幸运。",
+          "type": "good"
+        },
+        {
+          "t": "内部比较朴素，外观也不起眼，别期待华丽。",
+          "type": "neutral"
+        },
+        {
+          "t": "开放时间不稳定，白跑过一次。",
+          "type": "bad"
+        },
+        {
+          "t": "没有明显标识，第一次不太好找。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/Peterskirche_Lindau_%28Bodensee%29.jpg/960px-Peterskirche_Lindau_%28Bodensee%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_31.jpg/960px-Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_31.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c0/Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_32-34_HDR.jpg/960px-Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_32-34_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_35-37_HDR.jpg/960px-Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_35-37_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_38-40_HDR.jpg/960px-Iglesia_de_San_Pedro%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_38-40_HDR.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Krell-Orgel_Lindau.JPG/960px-Krell-Orgel_Lindau.JPG"
+      ],
+      "id": "st-petri",
+      "visit": "inside"
+    },
+    {
+      "name": "曼格图尔",
+      "nameEn": "Mangturm",
+      "tag": "13世纪釉砖古塔 · 港畔地标",
+      "selected": true,
+      "intro": "曼格图尔（Mangturm）是林道港最古老的塔楼，始建于约13世纪，最初作为瞭望塔与旧城防体系的一部分，守护着通往湖港的水道。它最惹眼的是覆盖整座塔身的彩色釉砖鳞片纹饰，在阳光下泛着青绿与金黄的光泽，与旁边白色的新灯塔形成有趣的古今对话。塔身紧邻湖岸，下方石基浸润在博登湖中，是老城天际线上最具辨识度的一笔，也是摄影爱好者钟爱的近景机位。",
+      "hours": "塔身为历史建筑，外观全天可观赏、免费；内部通常不对游客开放。",
+      "price": "免费。",
+      "duration": "约 15–20 分钟",
+      "tips": "低角度贴近湖面拍塔身釉砖纹饰最好看；与新灯塔同框构图经典。",
+      "mapQuery": "Mangturm, Lindau",
+      "rating": 4.4,
+      "reviews": 1600,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "彩色釉砖塔身太特别了，和旁边白灯塔反差萌。",
+          "type": "good"
+        },
+        {
+          "t": "紧贴湖边，低角度拍倒影很出片。",
+          "type": "good"
+        },
+        {
+          "t": "就是一座塔，看一眼拍张照就好。",
+          "type": "neutral"
+        },
+        {
+          "t": "不能登塔，稍微有点遗憾。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季游客围在塔下，想拍干净角度得赶早。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/20221020_Mangturm.jpg/960px-20221020_Mangturm.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Der_Mangturm_im_Hafen_von_Lindau_in_Bayern_in_Deutschland.jpg/960px-Der_Mangturm_im_Hafen_von_Lindau_in_Bayern_in_Deutschland.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Lindau%2C_Mangturm_IMG_9231_2025-08-18_17.40.jpg/960px-Lindau%2C_Mangturm_IMG_9231_2025-08-18_17.40.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/Lindau_%28Bodensee%29_Mangturm_043a_01.jpg/960px-Lindau_%28Bodensee%29_Mangturm_043a_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/21/Lindau_%28Bodensee%29_Mangturm_043a_04.jpg/960px-Lindau_%28Bodensee%29_Mangturm_043a_04.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Torre_Mang%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_48.jpg/960px-Torre_Mang%2C_Lindau%2C_Alemania%2C_2022-10-22%2C_DD_48.jpg"
+      ],
+      "id": "mangturm",
+      "visit": "inside"
+    },
+    {
+      "name": "博登湖湖滨",
+      "nameEn": "Lake Constance (Bodensee) Promenade",
+      "tag": "三国交界湖水生活 · 长廊漫步",
+      "selected": true,
+      "intro": "博登湖（Bodensee，又称康斯坦茨湖）是林道的灵魂背景，这座小城就坐落在它的东岸湖湾之中。湖滨长廊（Promenade）沿着老城外侧铺展，另一侧则是开阔的水面与对岸奥地利、瑞士的阿尔卑斯山脊。清晨薄雾笼罩湖面时如入水墨画；夏日白色渡轮划开碧波，游泳与帆影点缀其间；冬季则有难得的「湖面雾凇」奇景。沿着长廊散步、租一艘脚踏船、或搭渡轮前往对岸小镇，都是体验「三国交界湖水生活」最自在的方式。",
+      "hours": "湖滨公共区域全天开放、免费；游船/水上活动按运营时间。",
+      "price": "漫步免费；渡轮与水上项目另购票（见港口景点）。",
+      "duration": "约 1–2 小时",
+      "tips": "清晨与日落光线最美；想拍湖对岸雪山用长焦；渡轮班次看当日公告。",
+      "mapQuery": "Bodensee Promenade, Lindau",
+      "rating": 4.7,
+      "reviews": 9100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "清晨湖面起雾像水墨画，太治愈了。",
+          "type": "good"
+        },
+        {
+          "t": "沿长廊走到灯塔那段特别舒服，免费还好看。",
+          "type": "good"
+        },
+        {
+          "t": "冬天风大挺冷，注意保暖和帽子。",
+          "type": "neutral"
+        },
+        {
+          "t": "夏天湖边人不少，想清静得早起。",
+          "type": "bad"
+        },
+        {
+          "t": "游泳水质看季节，下水前查下公告。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Promenade_Insel_Lindau_1.JPG/960px-Promenade_Insel_Lindau_1.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Promenade_Insel_Lindau_2.JPG/960px-Promenade_Insel_Lindau_2.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/Promenade_Insel_Lindau_4.JPG/960px-Promenade_Insel_Lindau_4.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/61/Promenade_Insel_Lindau_5.JPG/960px-Promenade_Insel_Lindau_5.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Promenade_Insel_Lindau_6.JPG/960px-Promenade_Insel_Lindau_6.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Promenade_Insel_Lindau_7a.JPG/960px-Promenade_Insel_Lindau_7a.JPG"
+      ],
+      "id": "bodensee",
+      "visit": "inside"
+    },
+    {
+      "name": "林道港",
+      "nameEn": "Lindau Harbor",
+      "tag": "博登湖最上镜湖港 · 游船起点",
+      "selected": true,
+      "intro": "林道港是整座小镇的灵魂所在，也是博登湖上最上镜的湖港之一。入港航道由新灯塔与巴伐利亚雄狮一左一右把守：雄狮昂首伫立，象征巴伐利亚守护湖疆；灯塔则指引过往船只。港内停泊着往返于德国、奥地利、瑞士之间的白色渡轮与帆船，岸边咖啡馆鳞次栉比。无论清晨薄雾、正午碧波还是蓝色时刻的灯火，这里都呈现截然不同的浪漫，是登船游湖与湖畔漫步的起点。",
+      "hours": "港口公共区域全天开放、免费；渡轮按班次运营（约 06:00–21:00，随季节调整）。",
+      "price": "漫步港口免费；游湖渡轮/观光船另购票（单程约 €10–25，按航线与舱位）。",
+      "duration": "约 1–2 小时",
+      "tips": "想拍空集港口趁清晨；傍晚蓝色时刻灯塔与雄狮亮灯最出片；渡轮可前往腓特烈港、康斯坦茨。",
+      "mapQuery": "Lindau Harbor, Lindau",
+      "rating": 4.7,
+      "reviews": 6800,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "港口太美了，坐渡轮游湖看三国交界太值。",
+          "type": "good"
+        },
+        {
+          "t": "蓝色时刻灯塔亮灯那一下，手机直接拍爆。",
+          "type": "good"
+        },
+        {
+          "t": "夏天游客多，找张岸边的空桌不容易。",
+          "type": "neutral"
+        },
+        {
+          "t": "渡轮票价比想象贵，家庭出游开销不小。",
+          "type": "bad"
+        },
+        {
+          "t": "风大日子湖面颠簸，容易晕船。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Harbor_entrance_of_Lindau%2C_Bavaria%2C_Germany_at_night.jpg/960px-Harbor_entrance_of_Lindau%2C_Bavaria%2C_Germany_at_night.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Lindau_Harbor_2012.JPG/960px-Lindau_Harbor_2012.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/Lindau_Harbor_Lake_Constance_01.jpg/960px-Lindau_Harbor_Lake_Constance_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Lindau_Harbor_at_Blue_Hour.JPG/960px-Lindau_Harbor_at_Blue_Hour.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Lindau-railwaystation_Lindau-harbor-02ESD.jpg/960px-Lindau-railwaystation_Lindau-harbor-02ESD.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Lindau_Harbor_%28188475761%29.jpeg/960px-Lindau_Harbor_%28188475761%29.jpeg"
+      ],
+      "id": "harbor",
+      "visit": "inside"
+    },
+    {
+      "name": "林道新灯塔",
+      "nameEn": "Neuer Leuchtturm (Lindau Lighthouse)",
+      "tag": "巴伐利亚唯一可登顶灯塔 · 湖港封面",
+      "selected": true,
+      "intro": "林道新灯塔（Neuer Leuchtturm）建于1853–1856年，矗立于湖港入口的防波堤顶端，是巴伐利亚州唯一一座仍在使用、且可登顶的灯塔。它高约33米，盘旋铁梯共139级，塔顶平台可将博登湖、林道老城与远处的阿尔卑斯山尽收眼底。每到夏季傍晚，灯塔亮起暖光，与脚下的巴伐利亚雄狮、停泊的帆船共同构成林道最经典的入港画面，也是游客必拍的封面地标。",
+      "hours": "登塔季节通常 4–10 月，约 10:00–19:00（天气不佳可能关闭）；12/24、12/31 不开放。",
+      "price": "登塔成人约 €3.5；优惠（学生·老人）约 €2.5；6 岁以下免费；湖畔观赏灯塔免费。",
+      "duration": "约 30–45 分钟",
+      "tips": "登顶楼梯较窄，建议轻装；日落前 1 小时上去能同时拍到蓝调湖面与亮灯瞬间。",
+      "mapQuery": "Neuer Leuchtturm, Lindau",
+      "rating": 4.5,
+      "reviews": 3100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "139级楼梯换来的湖景值回票价，视野超开阔。",
+          "type": "good"
+        },
+        {
+          "t": "灯塔配雄狮的入港画面太经典，必打卡。",
+          "type": "good"
+        },
+        {
+          "t": "登塔要排队，旺季等得有点久。",
+          "type": "neutral"
+        },
+        {
+          "t": "楼梯又陡又窄，恐高或带娃的要谨慎。",
+          "type": "bad"
+        },
+        {
+          "t": "只在暖季开放，冬天来只能湖边看看。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/20221020_Leuchtturm_Lindau_02.jpg/960px-20221020_Leuchtturm_Lindau_02.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/20221020_Leuchtturm_Lindau_06.jpg/960px-20221020_Leuchtturm_Lindau_06.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Neuer_Lindauer_Leuchtturm.jpg/960px-Neuer_Lindauer_Leuchtturm.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Neuer_Lindauer_Leuchtturm_Oktober_2018_01.jpg/960px-Neuer_Lindauer_Leuchtturm_Oktober_2018_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/New_Lighthouse_Lindau_Harbor_Lake_Constance_01.jpg/960px-New_Lighthouse_Lindau_Harbor_Lake_Constance_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/Lindau_Lighthouse%2C_Germany%2C_20250502_0921_8496.jpg/960px-Lindau_Lighthouse%2C_Germany%2C_20250502_0921_8496.jpg"
+      ],
+      "id": "lighthouse",
+      "visit": "inside"
+    },
+    {
+      "name": "巴伐利亚雄狮",
+      "nameEn": "Bavarian Lion (Loewenmonument)",
+      "tag": "湖港守护狮 · 林道封面地标",
+      "selected": true,
+      "intro": "巴伐利亚雄狮（Bayerischer Löwe）是林道港入口处一尊昂首伫立的巨型石狮雕像，由雕塑家约翰·冯·霍尔茨海默于1856年创作，与东侧的新灯塔共同把守着博登湖的入港航道。雄狮前爪踏着巴伐利亚王冠，目光望向湖心，象征巴伐利亚王国对这片湖疆的守护。它脚下的基座原是旧防御工事的残迹，如今与灯塔、停泊的帆船构成林道最具辨识度的封面画面，游客几乎都会在此合影留念。",
+      "hours": "户外雕像，全天可观赏、免费。",
+      "price": "免费。",
+      "duration": "约 10–15 分钟",
+      "tips": "与灯塔同框的经典机位在防波堤上；清晨逆光少、人少，更容易拍到干净画面。",
+      "mapQuery": "Bavarian Lion, Lindau Harbor",
+      "rating": 4.5,
+      "reviews": 2400,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "雄狮和灯塔同框太经典了，必拍照点。",
+          "type": "good"
+        },
+        {
+          "t": "石雕细节很棒，能看出守护湖疆的气势。",
+          "type": "good"
+        },
+        {
+          "t": "就是个雕像，看一眼就好，别期待太久。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季全是人，想单独拍张狮子不容易。",
+          "type": "bad"
+        },
+        {
+          "t": "风大时站防波堤上挺冷，注意保暖。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Loewenmonument_Lindau-1.jpg/960px-Loewenmonument_Lindau-1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Loewenmonument_Lindau-2.jpg/960px-Loewenmonument_Lindau-2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Loewenmonument_Lindau-3.jpg/960px-Loewenmonument_Lindau-3.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Loewenmonument_Lindau-4.jpg/960px-Loewenmonument_Lindau-4.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/84/Loewenmonument_Lindau-5.jpg/960px-Loewenmonument_Lindau-5.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Loewenmonument_Yachthafen_Lindau-1.jpg/960px-Loewenmonument_Yachthafen_Lindau-1.jpg"
+      ],
+      "id": "bavarian-lion",
+      "visit": "outside"
+    },
+    {
+      "id": "hotel-5",
+      "name": "Ferienwohnung Lemon Grass",
+      "nameEn": "",
+      "tag": "物流 · 住宿",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "住宿",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Ferienwohnung Lemon Grass"
+    }
+  ],
+  "_day": {
+    "n": 5,
+    "date": "2026-10-04",
+    "weekday": "周日",
+    "cities": [
+      "特里贝格",
+      "林道"
+    ],
+    "chainLabel": "特里贝格➡️林道",
+    "start": "特里贝格 H-Apartments",
+    "hotel": "Ferienwohnung Lemon Grass",
+    "meals": {
+      "b": "—",
+      "l": "—",
+      "d": "—"
+    }
+  }
+};
+
+/* =========================== 渲染逻辑（一般无需修改） =========================== */
+
+function stars(r){
+  if(r==null || isNaN(r)) return "暂无";
+  const full = Math.round(r);
+  return "★".repeat(full) + "☆".repeat(5-full);
+}
+const TYPE_LABEL = {good:"好评", neutral:"中评", bad:"差评"};
+function mapSrc(q, z){
+  return "https://maps.google.com/maps?q=" + encodeURIComponent(q) + "&z=" + (z||15) + "&output=embed";
+}
+const STORE_KEY = DATA._storeKey || ("taf-sel-" + (DATA.cityEn||DATA.city||"travel"));
+/* 三态参观状态：inside=入内参观 / outside=外部参观 / null=不参观。
+   同时兼容旧数据的布尔 selected（true→inside，false→不参观）。 */
+function getVisit(a){
+  if(a.visit==="inside"||a.visit==="outside") return a.visit;
+  if(a.selected===true) return "inside";
+  return null;
+}
+function loadStates(){
+  // 优先从 localStorage 读取已保存的参观状态（按城市隔离）；无记录时回退到 DATA 默认。
+  const map = new Map();
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw){
+      const saved = JSON.parse(raw);
+      if(saved && saved.states){
+        DATA.attractions.forEach(a=> map.set(a.id, saved.states[a.id]||null));
+        return map;
+      }
+      // 兼容旧版只存 ids 的存档
+      if(saved && Array.isArray(saved.ids)){
+        const s = new Set(saved.ids);
+        DATA.attractions.forEach(a=> map.set(a.id, s.has(a.id)?"inside":null));
+        return map;
+      }
+    }
+  } catch(e){ /* localStorage 不可用时回退默认 */ }
+  DATA.attractions.forEach(a=>{ if(a.kind!=="note") map.set(a.id, getVisit(a)); });
+  return map;
+}
+function writeSel(){
+  // 写入机器可读的 #taf-selection JSON（供其它 skill 读取）：记录全部景点及其三态参观状态
+  // （visit: "inside" 入内参观 / "outside" 外部参观 / null 不参观），与 localStorage 存档保持一致。
+  const sel = DATA.attractions.map(a=>({id:a.id, name:a.name, visit: getVisit(a) || null}));
+  const obj = { city: DATA.city, cityEn: DATA.cityEn, total: DATA.attractions.length, selected: sel };
+  document.getElementById("taf-selection").textContent = JSON.stringify(obj);
+}
+function updateChip(id, v){
+  const chip = document.querySelector('nav.toc a[data-id="'+id+'"]');
+  if(chip){
+    chip.classList.remove("chip-inside","chip-outside","chip-none");
+    chip.classList.add(v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none");
+  }
+}
+function applyVisit(id, v){
+  // v: "inside" | "outside" | null
+  const a = DATA.attractions.find(x=>x.id===id);
+  if(a){ a.visit = v; a.selected = v!==null; }
+  const card = document.getElementById(id);
+  if(card){
+    const btn = card.querySelector(".visit-toggle");
+    if(btn){
+      btn.classList.remove("vt-none","vt-inside","vt-outside");
+      btn.classList.add(v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none");
+      const ico = btn.querySelector(".vt-ico");
+      const txt = btn.querySelector(".vt-txt");
+      if(ico) ico.textContent = v==="inside"?"✓":v==="outside"?"○":"○";
+      if(txt) txt.textContent = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    }
+    card.setAttribute("data-visit", v||"none");
+    card.setAttribute("data-selected", v!==null ? "true":"false");
+  }
+  updateChip(id, v);
+  writeSel();
+  markDirty(); // 标记有未保存更改
+}
+function cycleVisit(id){
+  const a = DATA.attractions.find(x=>x.id===id);
+  const cur = a ? (a.visit==="inside"?"inside":a.visit==="outside"?"outside":null) : null;
+  const next = cur==="inside" ? "outside" : cur==="outside" ? null : "inside";
+  applyVisit(id, next);
+}
+
+/* 点击标签栏 chip 后跳转到对应卡片：桌面端平滑滚动到锚点，手机端横向滑动到卡片 */
+function navigateToCard(id, idx){
+  if(window.matchMedia("(max-width:760px)").matches){
+    var card = document.getElementById(id);
+    var deck = document.getElementById("list");
+    if(card && deck){
+      var navH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--nav-h")) || 56;
+      var deckTop = deck.getBoundingClientRect().top + window.scrollY - navH - 8;
+      window.scrollTo({top: Math.max(0, deckTop), behavior:"smooth"});
+      var cardLeft = card.getBoundingClientRect().left - deck.getBoundingClientRect().left + deck.scrollLeft;
+      deck.scrollTo({left: cardLeft, behavior:"smooth"});
+      var resetTop = function(){ card.scrollTop = 0; };
+      requestAnimationFrame(resetTop);
+      setTimeout(resetTop, 450);
+    }
+  } else {
+    var card = document.getElementById(id);
+    var head = card ? card.querySelector(".a-head") : null;
+    if(head) head.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+  centerChip(idx);
+}
+
+/* 物流简化卡（停车/取车）：仅标题、谷歌地图、费用/说明 */
+function renderLogistics(a, i){
+  const list = document.getElementById("list");
+  const toc = document.getElementById("chips");
+  if(!a.id) a.id = "log-" + i;
+  const aEl = document.createElement("section");
+  aEl.className = "attraction logistics";
+  aEl.id = a.id;
+  aEl.setAttribute("data-visit", "none");
+  aEl.setAttribute("data-selected", "false");
+  const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || a.name);
+  aEl.innerHTML = `
+    <div class="left">
+      <div class="a-head"><h2>${a.name}</h2></div>
+      <div class="tag-row"><span class="tag">${a.tag || ("物流 · " + (a.noteType||""))}</span></div>
+      <div class="facts">
+        <div class="fact"><h4>${a.noteType==="取车"?"取车说明":a.noteType==="住宿"?"住宿":"停车费用"}</h4><p>${a.price || "—"}</p></div>
+      </div>
+    </div>
+    <aside class="right">
+      <div class="mapcard">
+        <iframe class="map-frame" loading="lazy" title="Google 地图"
+          src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+        <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+      </div>
+    </aside>`;
+  list.appendChild(aEl);
+  const chip = document.createElement("a");
+  chip.href = "#" + aEl.id;
+  chip.dataset.id = a.id;
+  chip.dataset.idx = i;
+  chip.textContent = a.name;
+  chip.className = "chip-none";
+  chip.addEventListener("click", function(e){ e.preventDefault(); navigateToCard(aEl.id, i); });
+  toc.appendChild(chip);
+}
+
+/* 轻量 toast 提示（自包含，首次调用时动态创建元素，不占页面空间） */
+function showToast(msg){
+  let t=document.getElementById("taf-toast");
+  if(!t){
+    t=document.createElement("div");
+    t.id="taf-toast";
+    t.style.cssText="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:rgba(20,30,50,.92);color:#fff;padding:10px 18px;border-radius:10px;font:600 13px/1.4 system-ui,-apple-system,sans-serif;z-index:9999;opacity:0;transition:opacity .25s;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.25)";
+    document.body.appendChild(t);
+  }
+  t.textContent=msg; t.style.opacity="1";
+  clearTimeout(showToast._t);
+  showToast._t=setTimeout(()=>{ t.style.opacity="0"; }, 2200);
+}
+
+/* 保存更改：把当前选取写入本机浏览器 localStorage（按城市隔离）。
+   切换选取不会自动保存，需点击标签栏右侧「保存更改」按钮；保存前按钮呈橙色警示「未保存」。 */
+function markDirty(){
+  const b=document.getElementById("saveBtn");
+  if(b) b.classList.add("dirty");
+}
+function saveSelection(){
+  const states = {};
+  DATA.attractions.forEach(a=>{ states[a.id] = getVisit(a); });
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({city:DATA.city, states}));
+    const b=document.getElementById("saveBtn");
+    if(b) b.classList.remove("dirty");
+    showToast("已保存 ✓");
+  } catch(e){
+    showToast("保存失败：" + (e && e.message ? e.message : e));
+  }
+}
+
+function render(){
+  document.getElementById("flag").textContent = DATA.flag || "📍";
+  if(DATA._dayNum){
+    const cityParts = (DATA._allCities || []).map(c => c.cn + (c.en ? "（"+c.en+"）" : ""));
+    document.getElementById("cityTitle").textContent = DATA.country + " · 第" + DATA._dayNum + "天 · " + cityParts.join(" · ");
+    document.title = DATA.country + " · 第" + DATA._dayNum + "天" + (cityParts.length ? " · " + cityParts.join(" · ") : "");
+    document.getElementById("region").textContent = (DATA._date || "") + (DATA._weekday ? " " + DATA._weekday : "");
+  } else {
+    document.getElementById("cityTitle").textContent = DATA.country + " · " + DATA.city + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.title = DATA.country + " · " + DATA.city + " 景点导览" + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.getElementById("region").textContent = DATA.region || "";
+  }
+  document.getElementById("cityIntro").textContent = DATA.intro || "";
+  const mapCity = DATA._allCities ? (DATA._allCities[0].en || DATA._allCities[0].cn) : (DATA.cityEn || DATA.city);
+  document.getElementById("cityMap").src = mapSrc(mapCity + ", " + (DATA.countryEn||DATA.country), DATA.mapZoom || 5);
+  if(DATA._home){
+    document.body.classList.add("home");
+    document.getElementById("cityTitle").textContent = DATA.city || "行程总览";
+    document.title = (DATA.city||"行程总览") + " · 行程总览";
+    document.getElementById("region").textContent = DATA.region || "";
+    document.getElementById("cityIntro").textContent = DATA.intro || "";
+    try{document.querySelector("nav.toc").style.display="none";}catch(e){}
+    renderHome();
+    bindTotop();
+    return;
+  }
+
+  const toc = document.getElementById("chips");
+  const list = document.getElementById("list");
+  /* 重绘前先清空容器，保证 render() 可安全重复调用（如云端同步后二次重绘），
+     否则会叠加出重复卡片与重复标签栏 chip。 */
+  toc.innerHTML = "";
+  list.innerHTML = "";
+  /* 先为所有景点补齐稳定且唯一的 id（优先用自带 id，否则回退 "a"+序号），
+     供锚点、标签栏 data-id、勾选回传与保存集合统一使用——缺失 id 会导致
+     标签亮显错位、勾选与卡片不同步、保存失效。 */
+  DATA.attractions.forEach((a,i)=>{ if(!a.id) a.id = "a"+i; });
+  const stateMap = loadStates();
+  DATA.attractions.forEach((a,i)=>{
+    if(a.kind==="note"){ renderNote(a); return; }
+    if(a.kind==="logistics" || a.logistics){ renderLogistics(a,i); return; }
+    const v = stateMap.get(a.id) || null;
+    a.visit = v;
+    a.selected = v!==null;
+    const visitClass = v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none";
+    const visitIco = v==="inside"?"✓":v==="outside"?"○":"○";
+    const visitTxt = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    const phNote = a.placeholder ? `<span class="ph-note">⚠ 该景点暂未收录详细导览，可后续用景点搜罗补充</span>` : "";
+    const aEl = document.createElement("section");
+    aEl.className = "attraction" + (a.placeholder?" placeholder":"");
+    aEl.id = a.id || ("a"+i);
+    aEl.setAttribute("data-visit", v||"none");
+    aEl.setAttribute("data-selected", v!==null ? "true" : "false");
+    const imgs = (a.photos||[]).map(p=>`<img src="${p}" alt="${a.name}" loading="lazy" onclick="openLb('${p}')">`).join("");
+    const reviewItems = (a.reviewList||[]).map(r=>{
+      let t="good", txt=r;
+      if(r && typeof r==="object"){ t=r.type||"good"; txt=r.t||r.text||""; }
+      const lb = TYPE_LABEL[t]||"好评";
+      return `<li class="review-item rt-${t}"><span class="rbadge rb-${t}">${lb}</span><span class="rtext">${txt}</span></li>`;
+    }).join("");
+    const scoreHtml = (a.rating!=null)
+      ? `<span class="stars">${stars(a.rating)}</span><span class="score">${a.rating}</span><span class="meta"> / 5</span>`
+      : `<span class="stars">${stars(a.rating)}</span>`;
+    const extraFacts = [
+      (a.duration? `<div class="fact"><h4>建议时长</h4><p>${a.duration}</p></div>` : ""),
+      (a.tips? `<div class="fact"><h4>实用贴士</h4><p>${a.tips}</p></div>` : "")
+    ].join("");
+    /* v2.1：谷歌地图直达链接（移动端可唤起 Google 地图 App） */
+    const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || (a.name + " " + DATA.city));
+    aEl.innerHTML = `
+      <div class="left">
+        <div class="a-head">
+          <h2>${a.name}</h2><span class="en">${a.nameEn||""}</span>
+          <button type="button" class="visit-toggle ${visitClass}" onclick="cycleVisit('${a.id}')">
+            <span class="vt-ico">${visitIco}</span><span class="vt-txt">${visitTxt}</span>
+          </button>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${a.tag||""}</span>
+          <a class="gmap-head gmap-tag" target="_blank" rel="noopener" href="${gmapUrl}">📍 谷歌地图</a>
+        </div>
+        <p class="a-intro">${a.intro||""}</p>${phNote}
+        <div class="facts">
+          <div class="fact"><h4>开放时间</h4><p>${a.hours||"—"}</p></div>
+          <div class="fact"><h4>票价</h4><p>${a.price||"—"}</p></div>
+          ${extraFacts}
+        </div>
+        <div class="gallery">${imgs}</div>
+      </div>
+      <aside class="right">
+        <div class="mapcard">
+          <iframe class="map-frame" loading="lazy" title="Google 地图"
+            src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+          <div class="reviewcol">
+            <div class="review-card">
+              <div class="rc-title">评价</div>
+              <div>${scoreHtml}</div>
+              <div class="meta">${a.reviews? a.reviews.toLocaleString()+" 条评价":""}</div>
+              <div class="src">来源：${a.ratingSource||"第三方聚合"}</div>
+              ${reviewItems? `<ul class="review-list">${reviewItems}</ul>`:""}
+              <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+            </div>
+          </div>
+        </div>
+      </aside>`;
+    list.appendChild(aEl);
+
+    // 顶部标签栏 chip（蓝色=已选）；点击跳转：移动端横向滑动到对应卡片，桌面端平滑滚动到锚点
+    const chip = document.createElement("a");
+    chip.href = "#" + aEl.id;
+    chip.dataset.id = a.id;
+    chip.dataset.idx = i;
+    chip.textContent = a.name;
+    chip.className = v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none";
+    chip.addEventListener("click", function(e){
+      e.preventDefault();
+      navigateToCard(aEl.id, i);
+    });
+    toc.appendChild(chip);
+  });
+  writeSel();
+  setNavHeight(); // chip 已生成，此刻测量标签栏真实高度并写入 --nav-h
+}
+
+/* 沿途备注卡（取车/停车/超市/住宿/起点/还车等），不入标签栏 chip */
+function renderNote(a){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const ICONS = {取车:"🚗", 停车:"🅿️", 超市:"🛒", 住宿:"🏨", 起点:"📍", 还车:"🔑", 景点:"📌", 轮渡:"⛴️"};
+  const icon = ICONS[a.noteType] || "📝";
+  const el = document.createElement("div");
+  el.className = "note-card";
+  el.innerHTML = `<div class="ni">${icon}</div><div class="nt">${a.text||""}</div>`;
+  list.appendChild(el);
+}
+
+/* 首页总览：把每天的日卡渲染为卡片网格（仿景点搜罗首页的城市卡片） */
+const DAY_PALETTE = ["#2f6df0","#e14b4b","#f59e0b","#10b981","#06b6d4","#8b5cf6",
+                     "#f97316","#ec4899","#0ea5e9","#64748b","#14a44d","#9333ea"];
+function renderHome(){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const days = DATA._days || [];
+  list.className = "wrap"; // 去掉 deck（首页纵向滚动，不横向滑卡）
+  list.innerHTML = "";
+  if(days.length){
+    const h = document.createElement("h2");
+    h.className = "day-sec-t";
+    h.innerHTML = `每日行程 <span class="ct">${days.length}</span>`;
+    list.appendChild(h);
+  }
+  const grid = document.createElement("div");
+  grid.className = "day-grid";
+  days.forEach((d,idx)=>{
+    const color = DAY_PALETTE[idx % DAY_PALETTE.length];
+    const dn = (d.n!=null? d.n : (d.file||"").replace(/\D/g,"")) || (idx+1);
+    const chain = (d.cities||[]).map(c=>`<span>${c}</span>`).join('<span class="arr">➡️</span>');
+    const prev = (d.preview||[]).join("、");
+    const el = document.createElement("a");
+    el.className = "day-card";
+    el.href = d.file || "#";
+    el.innerHTML =
+      `<div class="dc-logo" style="background:${color}">D${dn}</div>` +
+      `<div class="dc-body">` +
+        `<div class="dc-day">${d.label||("第"+dn+"天")}</div>` +
+        `<div class="dc-date">${d.date||""} ${d.weekday||""}</div>` +
+        `<div class="dc-chain">${chain}</div>` +
+        `<div class="dc-hotel">🏨 ${d.hotel||"—"}</div>` +
+        (prev? `<div class="dc-prev">${prev}</div>` : "") +
+      `</div>`;
+    grid.appendChild(el);
+  });
+  list.appendChild(grid);
+}
+
+/* 返回顶部浮钮：滚动超过一屏时显示，点击平滑回顶（单次绑定） */
+function bindTotop(){
+  var b = document.getElementById("toTop");
+  if(!b || b.dataset.bound) return;
+  b.dataset.bound = "1";
+  window.addEventListener("scroll", function(){
+    if(window.scrollY > 320) b.classList.add("show"); else b.classList.remove("show");
+  }, {passive:true});
+  b.addEventListener("click", function(){ window.scrollTo({top:0, behavior:"smooth"}); });
+}
+
+/* 测量顶部标签栏真实高度（chip 换行会变高），写入 --nav-h，供锚点偏移与右栏吸顶对齐使用 */
+function setNavHeight(){
+  const nav = document.querySelector("nav.toc");
+  if(nav) document.documentElement.style.setProperty("--nav-h", nav.offsetHeight + "px");
+}
+
+/* 复制所选清单按钮已移除：标签栏只保留选择状态 chip（蓝色=已选、灰色=未选），选择状态经卡片 data-selected / #taf-selection JSON 对外可读（文件即唯一真相，不依赖 localStorage）。 */
+
+/* 移动端横向滑动卡片：滑动到某景点时，自动高亮并把对应标签栏 chip 滚动居中 */
+function centerChip(idx){
+  const deck = document.getElementById("list");
+  if(!deck || deck.scrollWidth <= deck.clientWidth + 4) return; // 仅横向滑动（移动端）生效
+  const chipsEl = document.getElementById("chips");
+  if(!chipsEl) return;
+  const chip = chipsEl.querySelector('a[data-idx="'+idx+'"]');
+  if(!chip) return;
+  chipsEl.querySelectorAll('a').forEach(c=>c.classList.remove("active-chip"));
+  chip.classList.add("active-chip");
+  const target = chip.offsetLeft - (chipsEl.clientWidth - chip.offsetWidth) / 2;
+  chipsEl.scrollTo({left: Math.max(0, target), behavior:"smooth"});
+}
+function bindDeckScroll(){
+  const deck = document.getElementById("list");
+  if(!deck) return;
+  deck.addEventListener("scroll", ()=>{
+    if(deck.scrollWidth <= deck.clientWidth + 4) return;
+    const idx = Math.round(deck.scrollLeft / deck.clientWidth);
+    centerChip(idx);
+  }, {passive:true});
+}
+
+/* 桌面端：让右栏地图与评价卡分别和左栏内容上下对齐
+   - 地图高度 = 从标题顶部到「实用贴士」卡片底部的高度
+   - 评价卡高度 = 图片画廊高度（若内容超出则内部滚动） */
+function alignDesktopCards(){
+  const deck = document.getElementById("list");
+  if(deck && deck.scrollWidth > deck.clientWidth + 4) return; // 手机端不执行
+  document.querySelectorAll(".attraction").forEach(function(card){
+    const aHead = card.querySelector(".a-head");
+    const facts = card.querySelector(".facts");
+    const gallery = card.querySelector(".gallery");
+    const mapFrame = card.querySelector(".map-frame");
+    const reviewCol = card.querySelector(".reviewcol");
+    if(!aHead || !facts || !mapFrame) return;
+    const headRect = aHead.getBoundingClientRect();
+    const factsRect = facts.getBoundingClientRect();
+    const mapH = Math.round(factsRect.bottom - headRect.top);
+    mapFrame.style.height = mapH + "px";
+    mapFrame.style.minHeight = mapH + "px";
+    mapFrame.style.flex = "0 0 auto"; /* 防止 flex-grow 把地图撑高过设置值 */
+    if(gallery && reviewCol){
+      const galleryH = Math.round(gallery.getBoundingClientRect().height);
+      reviewCol.style.height = galleryH + "px";
+      reviewCol.style.minHeight = galleryH + "px";
+      reviewCol.style.overflowY = "auto";
+    }
+  });
+}
+/* 监听图片懒加载完成，图片加载导致画廊高度变化后重新对齐 */
+function observeGalleryImages(){
+  document.querySelectorAll(".gallery img").forEach(function(img){
+    if(img.complete) return;
+    img.addEventListener("load", function(){ alignDesktopCards(); }, {once:true});
+  });
+}
+
+function openLb(src){document.getElementById("lbImg").src=src;document.getElementById("lightbox").classList.add("open");}
+function closeLb(){document.getElementById("lightbox").classList.remove("open");}
+document.getElementById("lightbox").addEventListener("click",e=>{if(e.target.id==="lightbox")closeLb();});
+render();
+setNavHeight();
+bindDeckScroll();
+centerChip(0);
+alignDesktopCards();
+window.addEventListener("load", ()=>{ setNavHeight(); centerChip(0); alignDesktopCards(); observeGalleryImages(); });
+window.addEventListener("resize", ()=>{ setNavHeight(); alignDesktopCards(); });
+</script>
+</body>
+</html>
