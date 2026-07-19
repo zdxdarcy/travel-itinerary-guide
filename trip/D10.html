@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>景点导览</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2733; --muted:#6b7686;
+    --line:#e6e9ef; --accent:#2f6df0; --accent-soft:#eaf1ff; --accent-light:#cfe0ff; --star:#f5a623;
+    --shadow:0 6px 24px rgba(20,40,80,.08);
+    --nav-h:56px; /* 顶部标签栏高度：运行时由 JS 测量真实高度后覆盖，用于锚点偏移与右栏吸顶 */
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.65;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  html{scroll-behavior:smooth} /* 点击标签栏 chip 平滑跳转，并配合 scroll-margin-top 不被吸顶标签栏遮挡 */
+  .wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+
+  /* Header */
+  header.hero{background:linear-gradient(135deg,#2f6df0,#6aa0ff);color:#fff;padding:40px 0}
+  .hero-body{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .hero-text{flex:1;min-width:280px}
+  .flag{font-size:42px;line-height:1}
+  .hero h1{margin:12px 0 4px;font-size:34px;font-weight:800;letter-spacing:.5px}
+  .hero .region{opacity:.92;font-size:15px}
+  .hero p.intro{margin:16px 0 0;max-width:640px;font-size:15.5px;opacity:.96}
+  .hero-map{width:340px;flex:0 0 340px;height:230px;border-radius:16px;overflow:hidden;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.4)}
+  .hero-map iframe{width:100%;height:100%;border:0;filter:brightness(.95)}
+
+  /* 顶部标签栏：各景点选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）+ 右侧「保存」按钮 */
+  nav.toc{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  nav.toc .wrap{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-top:10px;padding-bottom:10px}
+  /* 标签栏只保留选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）；计数与复制按钮已移除 */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;flex:1;align-items:flex-start}
+  nav.toc a{font-size:13px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;
+    color:var(--muted);background:#fff;white-space:nowrap;transition:all .15s;flex:0 0 auto}
+  /* 三态配色：入内参观=蓝色、外部参观=淡蓝色、未选=灰色 */
+  nav.toc a.chip-inside{background:var(--accent);color:#fff;border-color:var(--accent)}
+  nav.toc a.chip-outside{background:var(--accent-light);color:var(--accent);border-color:#bcd4ff}
+  nav.toc a.chip-none{background:#fff;color:var(--muted);border-color:var(--line);opacity:.6}
+  nav.toc a:hover{border-color:var(--accent)}
+  nav.toc a.active-chip{outline:2px solid var(--accent);outline-offset:1px}
+  /* 「保存更改」按钮：已保存=绿色，切换选取后变橙色警示（未保存），点击保存后恢复绿色 */
+  .save-btn{margin-left:auto;flex:0 0 auto;font-size:13px;font-weight:700;color:#fff;background:#2f9e44;
+    border:1px solid #2f9e44;border-radius:999px;padding:7px 16px;cursor:pointer;white-space:nowrap;transition:all .15s}
+  .save-btn:hover{background:#2b8a3e;border-color:#2b8a3e}
+  .save-btn.dirty{background:#e8590c;border-color:#e8590c;box-shadow:0 0 0 3px rgba(232,89,12,.18)}
+  .save-btn.dirty:hover{background:#d9480f;border-color:#d9480f}
+  /* 手机端：标签栏单排横向滚动；当前景点对应 chip 自动居中；「保存」按钮在右、简短 */
+  @media (max-width:760px){
+    nav.toc .wrap{flex-wrap:nowrap;align-items:center;gap:8px}
+    .save-btn{order:0;margin-left:auto;align-self:center;flex:0 0 auto;padding:6px 14px;font-size:13px}
+    .chips{flex:1 1 auto;max-width:none;max-height:none;overflow-x:auto;overflow-y:hidden;
+      flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:center;scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch}
+    nav.toc a{flex:0 0 auto}
+  }
+  @media (max-width:560px){ .save-btn{padding:6px 10px;font-size:12px} }
+
+  /* Attraction：电脑端两栏（左文右图），移动端单卡横向滑动（.deck）。
+     v2.1：移动端以横向滑动卡片（.deck）逐张切换；电脑端保持 v2.0 两栏 + 右栏地图。 */
+  .deck{ } /* 桌面端：普通竖向流；移动端在媒体查询中改为横向滑动容器 */
+  .attraction{display:flex;gap:28px;padding:40px 0;border-bottom:1px solid var(--line);
+    scroll-margin-top:calc(var(--nav-h) + 16px)}
+  .left{flex:1;min-width:0}
+  .right{width:540px;flex:0 0 540px;position:sticky;top:var(--nav-h);display:flex;flex-direction:column}
+  .a-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0;scroll-margin-top:calc(var(--nav-h) + 12px)}
+  .a-head h2{margin:0;font-size:24px;font-weight:800}
+  .a-head .en{color:var(--muted);font-size:14px}
+  /* 三态参观选择：入内参观(✓) / 外部参观(○) / 不参观(○灰)。
+     点击在三种状态间循环切换，文字随状态变化，桌面与手机端一致。 */
+  .visit-toggle{display:inline-flex;align-items:center;gap:6px;margin-left:auto;cursor:pointer;
+    border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:14px;font-weight:600;
+    background:#fff;color:var(--muted);user-select:none;transition:all .15s;flex:0 0 auto}
+  .visit-toggle .vt-ico{font-weight:700;font-size:15px;line-height:1}
+  .visit-toggle.vt-inside{color:#fff;border-color:var(--accent);background:var(--accent)}
+  .visit-toggle.vt-outside{color:var(--accent);border-color:#bcd4ff;background:var(--accent-light)}
+  .visit-toggle.vt-none{color:var(--muted);border-color:var(--line);background:#fff}
+  .visit-toggle:active{transform:scale(.96)}
+  /* 谷歌地图直达链接：电脑端在标题行右侧（.gmap-title），移动端与分类标签同行居右（.gmap-tag） */
+  .tag-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 6px}
+  .tag{display:inline-block;padding:4px 12px;background:var(--accent-soft);color:var(--accent);
+    border-radius:999px;font-size:13px;font-weight:600}
+  .gmap-head{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;
+    color:var(--accent);background:var(--accent-soft);border:1px solid #cfe0ff;border-radius:999px;padding:5px 12px;
+    white-space:nowrap;transition:transform .12s, background .15s}
+  .gmap-head:active{transform:scale(.96);background:#dbe8ff}
+  .gmap-tag{display:none}
+
+  .a-intro{font-size:15.5px;color:#33404f;margin:0 0 20px;line-height:1.85}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+  .fact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+  .fact h4{margin:0 0 6px;font-size:12.5px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;font-weight:700}
+  .fact p{margin:0;font-size:14.5px;color:var(--ink);line-height:1.6}
+  .gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:22px}
+  .gallery img{width:100%;height:190px;object-fit:cover;border-radius:12px;border:1px solid var(--line);
+    cursor:pointer;transition:transform .15s ease, box-shadow .15s ease;background:#eef1f5}
+  .gallery img:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+
+  /* 右栏：地图在上、评价在下（桌面端右栏与左栏等高，地图用 JS 计算高度填满「标题→信息卡底部」的高度，
+     评价卡用 JS 对齐图片画廊高度；内部保持 22px 间隙与左栏 facts→gallery 间隙一致） */
+  .mapcard{display:flex;flex-direction:column;gap:22px;align-items:stretch;flex:1 1 auto;min-height:0}
+  .map-frame{width:100%;flex:1 1 auto;min-height:340px;border:0;border-radius:14px;box-shadow:var(--shadow);display:block}
+  .reviewcol{width:100%;display:block;flex:0 0 auto}
+  .review-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;
+    box-shadow:var(--shadow);width:100%;display:flex;flex-direction:column;justify-content:flex-start}
+  .review-card .rc-title{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .review-card .stars{font-size:22px;letter-spacing:2px;color:var(--star);line-height:1}
+  .review-card .score{font-weight:800;font-size:18px;margin-left:6px;color:var(--ink)}
+  .review-card .meta{font-size:13px;color:var(--muted);margin-top:6px}
+  .review-card .src{font-size:12px;color:var(--muted);margin-top:2px}
+  .review-card .gmap-link{display:inline-block;margin-top:10px;font-size:13px;font-weight:600}
+  .review-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .review-item{font-size:13px;color:#33404f;line-height:1.5;padding:8px 10px;background:#f8f9fb;border-radius:10px;
+    border-left:3px solid var(--accent);display:flex;gap:8px;align-items:flex-start}
+  .review-item .rtext{flex:1;min-width:0}
+  .review-item .rbadge{flex:0 0 auto;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;margin-top:1px}
+  .rb-good{background:#e7f6ec;color:#1f9d4d;border:1px solid #bfe6cc}
+  .rb-neutral{background:#fff4e0;color:#b9791b;border:1px solid #f0d49a}
+  .rb-bad{background:#fdeaea;color:#cf3b3b;border:1px solid #f3c2c2}
+  .rt-good{border-left-color:#1f9d4d}
+  .rt-neutral{border-left-color:#b9791b}
+  .rt-bad{border-left-color:#cf3b3b}
+
+  footer{padding:34px 0 60px;color:var(--muted);font-size:13px;text-align:center;line-height:1.8}
+
+  /* 复制提示 toast */
+  .toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-size:14px;font-weight:600;
+    opacity:0;pointer-events:none;transition:all .25s;z-index:200}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .lb{position:fixed;inset:0;background:rgba(10,18,30,.86);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .lb.open{display:flex}
+  .lb img{max-width:92vw;max-height:88vh;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .lb .close{position:absolute;top:18px;right:24px;color:#fff;font-size:34px;cursor:pointer;line-height:1}
+
+  /* 平板及以下：两栏收起为单栏（左文 + 右图上下堆叠） */
+  @media (max-width:1000px){
+    .attraction{flex-direction:column;gap:18px}
+    .right{width:100%;flex:none;position:static}
+    .facts{grid-template-columns:1fr}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+  /* 手机端：横向滑动卡片切换景点（每张占满屏宽，卡内纵向滚动）；谷歌地图改与分类标签同行 */
+  @media (max-width:760px){
+    .wrap{padding:0 20px} /* 保持与标签栏一致的左右留空 */
+    #list.deck, .deck{padding:0;display:flex;flex-direction:row;gap:0;overflow-x:auto;scroll-snap-type:x mandatory;
+      -webkit-overflow-scrolling:touch}
+    .attraction{flex:0 0 100%;width:100%;min-width:0;scroll-snap-align:start;border-bottom:none;
+      min-height:calc(100vh - var(--nav-h));min-height:calc(100dvh - var(--nav-h));
+      overflow-y:auto;padding:22px 20px;gap:0;background:var(--card);border-right:1px solid var(--line)}
+    /* 手机端：左栏改为纵向 flex，用 order 把「图片」提到「开放时间/票价/时长/贴士」之前
+       （电脑端 DOM 顺序仍是 信息→图片，故桌面端保持 v2.0 格式，仅手机端重排） */
+    .left{flex:none;display:flex;flex-direction:column}
+    .gallery{grid-template-columns:1fr 1fr;order:4}
+    .facts{margin-bottom:22px;order:5} /* 手机端：实用贴士与评价卡之间恢复与其它一致的 22px 间隙 */
+    .mapcard{flex:none;height:auto;gap:22px} /* 手机端：评价卡与地图卡之间保留与其它卡片一致的空隙 */
+    .map-frame{height:300px;min-height:0;order:2;margin-top:0}
+    .reviewcol{order:1;margin-bottom:0}
+    .right{display:block} /* 手机端：右栏不再等高拉伸，恢复普通块流 */
+    .gmap-tag{display:inline-flex}
+  }
+  @media (max-width:560px){
+    .hero-map{width:100%;flex:none}
+    .a-head h2{font-size:21px}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+
+  /* ===== 行程导览扩展样式 ===== */
+  /* 日程导航栏（替代城市导航栏）：D1..D12 跳转各天页 + 总览。
+     不固定（position:static），避免遮挡下方的景点标签栏；手机端亦不固定。 */
+  nav.daytabs{position:static;z-index:1;background:linear-gradient(135deg,#2f6df0,#6aa0ff);
+    border-bottom:1px solid rgba(255,255,255,.25)}
+  nav.daytabs .wrap{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 20px}
+  nav.daytabs a{font-size:12.5px;padding:5px 11px;border:1px solid rgba(255,255,255,.45);border-radius:999px;
+    color:#fff;background:rgba(255,255,255,.14);white-space:nowrap;transition:all .15s}
+  nav.daytabs a:hover{border-color:#fff;background:rgba(255,255,255,.28)}
+  nav.daytabs a.active{background:#fff;color:var(--accent);border-color:#fff;font-weight:700}
+  nav.daytabs a.home{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.55)}
+  nav.daytabs a.home:hover{background:rgba(255,255,255,.36)}
+  nav.daytabs .dt-sep{width:1px;height:18px;background:rgba(255,255,255,.35);margin:0 2px}
+  /* 沿途备注卡（取车/停车/超市/住宿/起点等） */
+  .note-card{display:flex;gap:12px;align-items:flex-start;padding:13px 18px;margin:10px 0;
+    border:1px dashed #c9d4e6;background:#f7faff;border-radius:12px}
+  .note-card .ni{font-size:18px;line-height:1.2;flex:0 0 auto}
+  .note-card .nt{font-size:14.5px;color:#33404f}
+  .note-card .nt b{color:var(--accent)}
+  /* 缺失景点占位卡 */
+  .attraction.placeholder .a-intro{color:var(--muted);font-style:italic}
+  .ph-note{display:inline-block;margin-top:10px;font-size:12.5px;color:#b9791b;
+    background:#fff4e0;border:1px solid #f0d49a;border-radius:999px;padding:3px 10px}
+  /* 物流简化卡（停车/取车） */
+  .attraction.logistics .a-head h2{font-size:22px}
+  .attraction.logistics .right .mapcard{gap:0}
+  .attraction.logistics .right .map-frame{min-height:260px}
+  @media (max-width:1000px){
+    .attraction.logistics{flex-direction:column}
+    .attraction.logistics .right{width:100%;flex:none}
+  }
+  @media (max-width:760px){
+    .attraction.logistics .right .map-frame{height:240px;min-height:0}
+  }
+  /* ===== 首页总览（仿景点搜罗首页：卡片网格） ===== */
+  /* 首页隐藏单日 hero 地图（总览不需要定位地图），hero 改为纵向左对齐 */
+  body.home .hero{padding:34px 0 26px}
+  body.home .hero-map{display:none}
+  body.home .hero-body{flex-direction:column;align-items:flex-start;gap:6px}
+  body.home .hero h1{font-size:30px}
+  body.home p.intro{opacity:.96}
+  /* 返回顶部浮钮（与景点搜罗首页一致） */
+  .totop{position:fixed;right:20px;bottom:20px;width:46px;height:46px;border-radius:50%;border:none;
+    background:var(--accent);color:#fff;cursor:pointer;z-index:600;opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .15s,background .15s;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    box-shadow:0 8px 22px rgba(20,40,80,.30)}
+  .totop .arw{font-size:18px;line-height:1;margin-top:2px}
+  .totop .lbl{font-size:10px;line-height:1;margin-top:1px}
+  .totop.show{opacity:1;pointer-events:auto}
+  .totop:hover{transform:translateY(-2px);background:#1f5ad6}
+  /* 首页区块标题（仿景点搜罗「全部城市」） */
+  .day-sec-t{font-size:20px;margin:24px 0 16px;display:flex;align-items:center;gap:10px}
+  .day-sec-t .ct{font-size:13px;font-weight:700;color:#fff;background:var(--accent);border-radius:999px;padding:2px 12px}
+  /* 日程卡片网格 */
+  .day-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .day-card{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px;box-shadow:0 6px 24px rgba(20,40,80,.06);transition:transform .15s,box-shadow .15s,border-color .15s;
+    text-decoration:none;color:inherit}
+  .day-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(20,40,80,.12);border-color:var(--accent)}
+  .dc-logo{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;font-weight:800;color:#fff;flex:0 0 auto;box-shadow:0 6px 16px rgba(0,0,0,.14);line-height:1.1;text-align:center}
+  .dc-body{flex:1;min-width:0}
+  .dc-day{font-size:17px;font-weight:800;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-date{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .dc-chain{margin-top:7px;font-weight:700;color:var(--accent);font-size:14.5px;line-height:1.45}
+  .dc-chain .arr{color:var(--accent);margin:0 4px;font-weight:400}
+  .dc-hotel{font-size:12.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-prev{font-size:12.5px;color:#46566a;margin-top:6px;line-height:1.6;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* 首页主体留白（hero 与卡片网格之间） */
+  body.home #list{padding-top:6px;padding-bottom:30px}
+  /* 手机端：日程网格单列、hero 字号收敛，保证可读性 */
+  @media (max-width:620px){
+    .day-grid{grid-template-columns:1fr}
+    .day-sec-t{font-size:18px;margin:18px 0 14px}
+    .dc-logo{width:48px;height:48px;font-size:15px}
+    .dc-day{font-size:16px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="daytabs"><div class="wrap"><a href="index.html" class="home">总览</a><span class="dt-sep"></span><a href="D01.html">D1</a><a href="D02.html">D2</a><a href="D03.html">D3</a><a href="D04.html">D4</a><a href="D05.html">D5</a><a href="D06.html">D6</a><a href="D07.html">D7</a><a href="D08.html">D8</a><a href="D09.html">D9</a><a href="D10.html" class="active">D10</a><a href="D11.html">D11</a><a href="D12.html">D12</a></div></nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-body">
+      <div class="hero-text">
+        <div class="flag" id="flag">📍</div>
+        <h1 id="cityTitle">加载中…</h1>
+        <div class="region" id="region"></div>
+        <p class="intro" id="cityIntro"></p>
+      </div>
+      <div class="hero-map">
+        <iframe id="cityMap" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- 顶部标签栏：各景点选择状态 chip（蓝色=已选、灰色=未选），点击跳转；右侧为「保存更改」按钮 -->
+<nav class="toc"><div class="wrap">
+  <div class="chips" id="chips"></div>
+  <button id="saveBtn" class="save-btn" type="button" onclick="saveSelection()">保存</button>
+</div></nav>
+
+<main class="wrap deck" id="list"></main>
+
+<footer>
+  本页由「国家 + 城市 → 景点导览」工作流程生成 · 地图为 Google Maps 嵌入<br>
+  每个景点展示 6 张来自 Wikimedia Commons 的真实照片（非 AI 生成）；评分与评论为基于游客反馈整理的代表性摘要<br>
+  点击景点标题右侧的「入内参观 / 外部参观」可在三种状态间切换来规划行程（入内参观 ✓ / 外部参观 ○ / 不参观）；状态同步到顶部标签栏（入内参观=蓝色，外部参观=淡蓝色，未选=灰色）；切换后点标签栏右侧「保存」把选择存入本机浏览器（localStorage），下次打开自动恢复（仅本浏览器/设备生效）。
+</footer>
+
+<!-- 机器可读的选择状态：其它 skill 渲染本页后可直接读取此 JSON -->
+<script type="application/json" id="taf-selection">{}</script>
+
+<div class="lb" id="lightbox"><span class="close" onclick="closeLb()">×</span><img id="lbImg" src="" alt=""></div>
+<div class="toast" id="toast"></div>
+<button class="totop" id="toTop" title="返回顶部" aria-label="返回顶部"><span class="arw">↑</span><span class="lbl">顶部</span></button>
+
+<script>
+/* =========================================================================
+   可复用数据块 —— 新建一座城市时，只需替换下面这个 DATA 对象。
+   城市规模对应景点数：小城市 15 个 / 中城市 20 个 / 大城市 30 个（可含「周边」景点，兼顾网红打卡地）。「周边」指驾车 1 小时以内可达的邻近城镇/景点；超过 1 小时车程的远途（如霍亨索伦城堡）不计入。
+   字段说明：
+     flag          国旗 emoji，如 🇩🇪 🇫🇷 🇯🇵 🇺🇸
+     country       国家（中文）
+     countryEn     国家英文名（用于页头地图，更稳定）
+     city          城市（中文）
+     cityEn        城市英文名（用于页头地图，更稳定）
+     region        地区/州省（可选）
+     intro         城市一句话简介
+     mapZoom       城市在国家中位置地图的缩放级别（默认 5，大国如美国用 4）
+     attractions[] 景点数组，每个景点：
+       id          英文锚点 id（用于目录跳转，保持唯一）
+       name        中文名
+       nameEn      英文名
+       tag         一句话标签
+       selected    是否「准备参观」——布尔值（兼容旧数据）；v2.1 起推荐用 visit 字段表达三态：visit:"inside" 入内参观 / "outside" 外部参观 / 缺省或 null 不参观。渲染与存档均兼容旧布尔 selected（true→inside，false→不参观）
+       rating      评分 0–5（数字），查不到填 null
+       reviews     评价数量（数字），查不到填 null
+       ratingSource 评分来源（如 Tripadvisor / Google）
+       mapQuery    地图检索词（地点名或地址，用于右侧 Google 地图）
+       intro       文字介绍，约 200 个汉字：涵盖历史由来、核心看点、游览体验与适合人群，避免一句话带过
+       hours       开放时间（写具体）：每周各日时段、闭馆日、最晚入场、特殊日期（如圣诞节/跨年）调整
+       price       票价（分档列出）：成人 / 优惠(学生·老人·残障) / 儿童 / 家庭票，注明免费人群与本地卡折扣
+       duration    建议游览时长，如 "约 2–3 小时"（可选）
+       tips         实用贴士，如最佳时段、交通、是否需预约（可选）
+       photos      6 张真实照片 URL 数组（来自 Wikimedia Commons，浏览器直接加载，无需下载；缺图景点可用其它同城真实照片补足）
+       reviewList  5 条代表性游客评论，须为对象数组：{t:"评论文字", type:"good"|"neutral"|"bad"}；每景点固定为 2 条好评 + 1 条中评 + 2 条差评
+   照片说明：本工作流不使用 AI 生成图，而是从网络取真实照片。
+选择状态说明：v2.1 起为三态——visit:"inside" 入内参观 / "outside" 外部参观 / 缺省(或 null) 不参观（兼容旧布尔 selected：true→inside，false→不参观）；
+  用户点击标题右侧按钮在三种状态间循环切换；状态会同步到顶部标签栏（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）、写入卡片 data-visit / data-selected 属性、写入 #taf-selection JSON，便于其它 skill 读取；标签栏只保留选择状态 chip，不再显示计数与复制按钮。
+  选取状态默认以 DATA.visit（或兼容的 DATA.selected）为准；点击「保存」后写入本机浏览器 localStorage（按城市隔离，存为 {states:{id:visit}}），下次打开自动恢复——仅本浏览器/设备生效，不写入文件。
+   ========================================================================= */
+const DATA = {
+  "flag": "🇩🇪",
+  "country": "德国",
+  "countryEn": "Germany",
+  "city": "第10天",
+  "cityEn": "",
+  "region": "2026-10-09 周五",
+  "intro": "",
+  "mapZoom": 5,
+  "_storeKey": "taf-itin-D10",
+  "_dayNum": 10,
+  "_allCities": [
+    {
+      "cn": "罗滕堡",
+      "en": "Rothenburg ob der Tauber"
+    },
+    {
+      "cn": "科隆",
+      "en": "Cologne (Köln)"
+    }
+  ],
+  "_date": "2026-10-09",
+  "_weekday": "周五",
+  "attractions": [
+    {
+      "name": "普拉因莱恩拐角",
+      "nameEn": "Plönlein (Iconic Corner)",
+      "tag": "明信片机位 · 童话拐角",
+      "selected": true,
+      "intro": "普拉因莱恩拐角（Plönlein）是罗滕堡最上镜的明信片机位：黄色的木筋屋夹在两座城门之间，左侧通向下方的陶伯河谷，右侧通往城堡。它浓缩了整座小城的童话气息，几乎出现在所有浪漫之路的宣传画中。清晨游客稀少时来此，能拍到无人的静谧画面。",
+      "hours": "拐角全天可观赏；周边店铺约 10:00–18:00。",
+      "price": "免费（公共街角）。",
+      "duration": "约 0.5 小时",
+      "tips": "清晨或傍晚人最少。",
+      "mapQuery": "Plönlein, Rothenburg ob der Tauber",
+      "rating": 4.8,
+      "reviews": 11200,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "明信片同款机位，超梦幻。",
+          "type": "good"
+        },
+        {
+          "t": "童话感拉满，必来打卡。",
+          "type": "good"
+        },
+        {
+          "t": "就一个拐角，停留时间短。",
+          "type": "neutral"
+        },
+        {
+          "t": "游客太多很难拍空镜。",
+          "type": "bad"
+        },
+        {
+          "t": "周边有点商业化。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_36.jpg/960px-Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_36.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_37.jpg/960px-Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_37.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3e/Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_39.jpg/960px-Pl%C3%B6nlein%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_39.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Pl%C3%B6nlein_%28Rothenburg_ob_der_Tauber%29.JPG/960px-Pl%C3%B6nlein_%28Rothenburg_ob_der_Tauber%29.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Pl%C3%B6nlein_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg/960px-Pl%C3%B6nlein_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Rothenburg_ob_der_Tauber_Pl%C3%B6nlein_3-001.jpg/960px-Rothenburg_ob_der_Tauber_Pl%C3%B6nlein_3-001.jpg"
+      ],
+      "id": "ploenlein",
+      "visit": "inside"
+    },
+    {
+      "name": "陶伯河双桥",
+      "nameEn": "Doppelbrücke (Double Bridge)",
+      "tag": "河谷地标 · 经典剪影",
+      "selected": true,
+      "intro": "陶伯河双桥（Doppelbrücke）是横跨陶伯河谷的石砌双层桥，上层供人通行、下层为引水渠，与河谷、老城构成经典剪影。从市长塔俯拍或从河岸仰望，都是罗滕堡最具代表性的风景。清晨薄雾里，桥与红顶老城宛如一幅水彩画。",
+      "hours": "桥体全天开放；河岸步道建议白天前往。",
+      "price": "免费。",
+      "duration": "约 0.5–1 小时",
+      "tips": "从 Rathausturm 俯拍角度最佳。",
+      "mapQuery": "Doppelbrücke, Rothenburg ob der Tauber",
+      "rating": 4.6,
+      "reviews": 6800,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "河上双桥构图绝美。",
+          "type": "good"
+        },
+        {
+          "t": "清晨人少最出片。",
+          "type": "good"
+        },
+        {
+          "t": "桥面较窄，注意安全。",
+          "type": "neutral"
+        },
+        {
+          "t": "从城里走下来有点远。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季河岸人多。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_005.jpg/960px-Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_005.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_013.jpg/960px-Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_013.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_014.jpg/960px-Doppelbr%C3%BCcke_Rothenburg_ob_der_Tauber_20210213_014.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Rothenburg_ob_der_Tauber%2C_Leuzenbronner_Stra%C3%9Fe%2C_Doppelbr%C3%BCcke%2C_Ansicht_vom_Rathausturm-20140819-001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Leuzenbronner_Stra%C3%9Fe%2C_Doppelbr%C3%BCcke%2C_Ansicht_vom_Rathausturm-20140819-001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Rothenburg_ob_der_Tauber%2C_Taubertalweg%2C_Doppelbr%C3%BCcke-006.jpg/960px-Rothenburg_ob_der_Tauber%2C_Taubertalweg%2C_Doppelbr%C3%BCcke-006.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Rothenburg_ob_der_Tauber%2C_Weinsteige%2C_Doppelbr%C3%BCcke-20160108-002.jpg/960px-Rothenburg_ob_der_Tauber%2C_Weinsteige%2C_Doppelbr%C3%BCcke-20160108-002.jpg"
+      ],
+      "id": "tauberbruecke",
+      "visit": "inside"
+    },
+    {
+      "name": "市集广场",
+      "nameEn": "Marktplatz (Market Square)",
+      "tag": "老城心脏 · 市政厅与饮水馆",
+      "selected": true,
+      "intro": "市集广场是罗滕堡老城的中心，环绕着哥特式旧市政厅、带天文钟的『市议会饮酒馆』（Ratstrinkstube）与立着圣乔治屠龙雕像的喷泉。中世纪以来这里便是贸易、庆典与行刑的舞台，铺装的石面与彩色山墙在阳光下格外明艳。每日整点，饮水馆的木偶会上演『豪饮干杯』传说，是游客必到的打卡点。",
+      "hours": "广场全天开放；木偶报时约 11:00、15:00、22:00。",
+      "price": "免费（广场）；登市政厅塔另购票。",
+      "duration": "约 0.5–1 小时",
+      "tips": "木偶表演前10分钟占位最佳；周边咖啡馆可观景。",
+      "mapQuery": "Marktplatz, Rothenburg ob der Tauber",
+      "rating": 4.6,
+      "reviews": 9200,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "一进场就穿越回中世纪。",
+          "type": "good"
+        },
+        {
+          "t": "木偶报时表演很有趣。",
+          "type": "good"
+        },
+        {
+          "t": "旺季人挤人，拍照要等。",
+          "type": "neutral"
+        },
+        {
+          "t": "周边餐厅偏贵。",
+          "type": "bad"
+        },
+        {
+          "t": "游客太多，少了点静谧。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/GER_Rothenburg_ob_der_Tauber%2C_Marktplatz_001.jpg/960px-GER_Rothenburg_ob_der_Tauber%2C_Marktplatz_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/GER_Rothenburg_ob_der_Tauber%2C_Marktplatz_002.jpg/960px-GER_Rothenburg_ob_der_Tauber%2C_Marktplatz_002.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg/960px-Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fd/Marktplatz%2C_Ostseite_Rothenburg_ob_der_Tauber_20230518_0239.jpg/960px-Marktplatz%2C_Ostseite_Rothenburg_ob_der_Tauber_20230518_0239.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Marktplatz_von_Norden_Rothenburg_ob_der_Tauber_20230122_0036.jpg/960px-Marktplatz_von_Norden_Rothenburg_ob_der_Tauber_20230122_0036.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Plaza_del_Mercado%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_11.jpg/960px-Plaza_del_Mercado%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_11.jpg"
+      ],
+      "id": "marktplatz",
+      "visit": "inside"
+    },
+    {
+      "name": "旧市政厅与高塔",
+      "nameEn": "Rathaus (Town Hall) & Tower",
+      "tag": "哥特—文艺复兴 · 登塔全景",
+      "selected": true,
+      "intro": "罗滕堡旧市政厅由哥特式（13世纪）与文艺复兴式（1578年重建）两座建筑拼接而成，立面融合了两种风格，是市集广场最气派的轮廓。其高塔对外开放，是俯瞰整座中世纪红顶老城与陶伯河谷的最佳观景台；塔内窄梯盘旋，登顶虽累，视野却值回票价。",
+      "hours": "塔楼约 09:30–12:30、13:30–17:00（季节调整）。",
+      "price": "登塔约 €3。",
+      "duration": "约 0.5 小时（含登塔）",
+      "tips": "塔顶风大，注意扶稳；拍照选清晨或黄昏。",
+      "mapQuery": "Rathaus, Rothenburg ob der Tauber",
+      "rating": 4.4,
+      "reviews": 4800,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "登塔俯瞰老城，太值了。",
+          "type": "good"
+        },
+        {
+          "t": "两种风格立面很有看头。",
+          "type": "good"
+        },
+        {
+          "t": "楼梯很窄，旺季要排队。",
+          "type": "neutral"
+        },
+        {
+          "t": "塔内闷热，夏天难受。",
+          "type": "bad"
+        },
+        {
+          "t": "腿脚不便者无法登顶。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/1973_Rothenburg_ob_der_Tauber_Rathaus.JPG/960px-1973_Rothenburg_ob_der_Tauber_Rathaus.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Rathaus_-_Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017_%284%29.jpg/960px-Rathaus_-_Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017_%284%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bd/Rothenburg_ob_der_Tauber%2C_Rathaus-001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Rathaus-001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/Rothenburg_ob_der_Tauber%2C_Rathaus-004.jpg/960px-Rothenburg_ob_der_Tauber%2C_Rathaus-004.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Rothenburg_ob_der_Tauber_Rathaus_003.JPG/960px-Rothenburg_ob_der_Tauber_Rathaus_003.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Rothenburg_ob_der_Tauber_27.07.2016_Rathaus_in_Rothenburg_%2828269007204%29.jpg/960px-Rothenburg_ob_der_Tauber_27.07.2016_Rathaus_in_Rothenburg_%2828269007204%29.jpg"
+      ],
+      "id": "rathaus",
+      "visit": "inside"
+    },
+    {
+      "name": "市议会饮酒馆",
+      "nameEn": "Ratstrinkstube (Councillors' Tavern)",
+      "tag": "报时木偶 · 豪饮干杯传说",
+      "selected": true,
+      "intro": "市议会饮酒馆是市集广场南侧一栋醒目的文艺复兴式建筑，外墙上嵌着著名的天文钟与『豪饮干杯』（Meistertrunk）木偶。传说1631年，面对瑞典将军要夷平城市的威胁，市长努施一口气喝下3.25升葡萄酒，赢得宽限而保全了罗滕堡。每日数度，木偶会重现这一幕，是广场上最欢乐的瞬间。",
+      "hours": "外观全天可见；木偶报时约 11:00、15:00、22:00（冬季或调整）。",
+      "price": "免费（外观观看）。",
+      "duration": "约 0.25 小时（等一场表演）",
+      "tips": "提前10分钟到广场中央占位；夜晚灯光下的立面更美。",
+      "mapQuery": "Ratstrinkstube, Rothenburg ob der Tauber",
+      "rating": 4.5,
+      "reviews": 6100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "木偶表演生动，孩子超爱。",
+          "type": "good"
+        },
+        {
+          "t": "背后传说很有故事感。",
+          "type": "good"
+        },
+        {
+          "t": "只有外观，看一眼就走。",
+          "type": "neutral"
+        },
+        {
+          "t": "表演时间短，容易错过。",
+          "type": "bad"
+        },
+        {
+          "t": "人太多，挤不进去。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Astronomische_Uhr%2C_Ratstrinkstube%2C_Rothenburg_ob_der_Tauber.JPG/960px-Astronomische_Uhr%2C_Ratstrinkstube%2C_Rothenburg_ob_der_Tauber.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Ratstrinkstube_%28Rothenburg_ob_der_Tauber%29.JPG/960px-Ratstrinkstube_%28Rothenburg_ob_der_Tauber%29.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Ratstrinkstube_-_Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg/960px-Ratstrinkstube_-_Marktplatz_-_Rothenburg_ob_der_Tauber_-_Germany_2017.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Ratstrinkstube_Rothenburg_2014.jpg/960px-Ratstrinkstube_Rothenburg_2014.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Ratstrinkstube_von_Rothenburg.jpg/960px-Ratstrinkstube_von_Rothenburg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Ratstrinkstube%2Cnight_view_-_panoramio.jpg/960px-Ratstrinkstube%2Cnight_view_-_panoramio.jpg"
+      ],
+      "id": "ratstrinkstube",
+      "visit": "inside"
+    },
+    {
+      "name": "圣诞博物馆",
+      "nameEn": "Deutsches Weihnachtsmuseum",
+      "tag": "全年圣诞 · 胡桃夹子",
+      "selected": true,
+      "intro": "罗滕堡圣诞博物馆（Deutsches Weihnachtsmuseum）由凯特·沃尔法特（Käthe Wohlfahrt）创立，全年展示手工玻璃球、木制胡桃夹子与古老圣诞装饰。紧邻的圣诞村（Weihnachtsdorf）无论何时都飘着节日气氛。这里是德国圣诞文化的朝圣地，也是挑选礼物的天堂。",
+      "hours": "博物馆 10:00–18:00（旺季延长），圣诞节前后最热闹。",
+      "price": "博物馆门票约 €6。",
+      "duration": "约 0.5–1 小时",
+      "tips": "连接圣诞村商店，预留购物时间。",
+      "mapQuery": "Deutsches Weihnachtsmuseum, Rothenburg ob der Tauber",
+      "rating": 4.3,
+      "reviews": 4100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "全年都能感受圣诞气氛。",
+          "type": "good"
+        },
+        {
+          "t": "胡桃夹子太可爱了。",
+          "type": "good"
+        },
+        {
+          "t": "展区不大，半小时看完。",
+          "type": "neutral"
+        },
+        {
+          "t": "门票偏贵。",
+          "type": "bad"
+        },
+        {
+          "t": "商店比展厅还大。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/In_Deutsches_Weihnachtstmuseum_2.jpg/960px-In_Deutsches_Weihnachtstmuseum_2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/K%C3%A4the_Wohlfahrt_Weihnachtsdorf_in_Rothenburg_ob_der_Tauber.JPG/960px-K%C3%A4the_Wohlfahrt_Weihnachtsdorf_in_Rothenburg_ob_der_Tauber.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/96/K%C3%A4the_Wohlfahrt_Weihnachtsdorf_Auto_in_Rothenburg_ob_der_Tauber.JPG/960px-K%C3%A4the_Wohlfahrt_Weihnachtsdorf_Auto_in_Rothenburg_ob_der_Tauber.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a0/Rothenburg_ob_der_Tauber%2C_K%C3%A4the-Wohlfahrt-Ashquith-Bus%2C_8.jpeg/960px-Rothenburg_ob_der_Tauber%2C_K%C3%A4the-Wohlfahrt-Ashquith-Bus%2C_8.jpeg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ea/Veh%C3%ADculo_de_K%C3%A4the_Wohlfahrt_Weihnachtsdorf%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_24.jpg/960px-Veh%C3%ADculo_de_K%C3%A4the_Wohlfahrt_Weihnachtsdorf%2C_Rothenburg_ob_der_Tauber%2C_Alemania%2C_2023-06-17%2C_DD_24.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Weichnachtsdorf.JPG/960px-Weichnachtsdorf.JPG"
+      ],
+      "id": "weihnachtsmuseum",
+      "visit": "outside"
+    },
+    {
+      "name": "圣雅各布教堂",
+      "nameEn": "St. Jakobskirche (St. James' Church)",
+      "tag": "哥特式朝圣教堂 · 圣血祭坛",
+      "selected": true,
+      "intro": "圣雅各布教堂是罗滕堡最主要的哥特式教堂，也是中世纪『雅各布朝圣之路』上的重要一站。其镇堂之宝是蒂尔曼·里门施奈德（Tilman Riemenschneider）雕刻的『圣血祭坛』（Heilig-Blut-Altar），以极细腻的木雕再现最后的晚餐与橄榄山场景。双中殿结构与彩窗光影营造出肃穆而圣洁的氛围，登塔可远眺红顶老城。",
+      "hours": "约 09:00–17:00（冬季缩短），登塔另计。",
+      "price": "成人约 €4，含登塔约 €6。",
+      "duration": "约 0.5–1 小时",
+      "tips": "圣血祭坛讲解牌值得细读；清晨人少光线柔。",
+      "mapQuery": "St. Jakobskirche, Rothenburg ob der Tauber",
+      "rating": 4.6,
+      "reviews": 7400,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "圣血祭坛木雕精美到窒息。",
+          "type": "good"
+        },
+        {
+          "t": "双中殿结构很特别。",
+          "type": "good"
+        },
+        {
+          "t": "需购票，门票略贵。",
+          "type": "neutral"
+        },
+        {
+          "t": "游客多，想安静祈祷难。",
+          "type": "bad"
+        },
+        {
+          "t": "登塔楼梯陡，老人慎行。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/St._Jakob_Kirche_Rothenburg_2014.jpg/960px-St._Jakob_Kirche_Rothenburg_2014.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f1/Jakobskirche_Rothenburg_Germany_-_panoramio.jpg/960px-Jakobskirche_Rothenburg_Germany_-_panoramio.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/MK58487_Jakobskirche_%28Rothenburg_ob_der_Tauber%29.jpg/960px-MK58487_Jakobskirche_%28Rothenburg_ob_der_Tauber%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/MK58492_Jakobskirche_%28Rothenburg_ob_der_Tauber%29.jpg/960px-MK58492_Jakobskirche_%28Rothenburg_ob_der_Tauber%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Rothenburg_ob_der_Tauber_Jakobskirche-20130816-RM-142237.jpg/960px-Rothenburg_ob_der_Tauber_Jakobskirche-20130816-RM-142237.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_148.jpg/960px-Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_148.jpg"
+      ],
+      "id": "st-jakobskirche",
+      "visit": "inside"
+    },
+    {
+      "name": "克林根门",
+      "nameEn": "Klingentor",
+      "tag": "防御塔楼 · 城墙西端",
+      "selected": true,
+      "intro": "克林根门（Klingentor）是罗滕堡西侧的宏伟防御塔楼，建于14世纪，曾兼作水塔与监狱。其粗壮的圆形塔身与城防工事相连，是徒步城墙时不可错过的地标。门内设有小展览，讲述中世纪水利与守城故事。登临附近步道，可俯瞰西面田园与河谷。",
+      "hours": "外观全天可看；门内小展约 11:00–16:00。",
+      "price": "外观免费；门内展览约 €2。",
+      "duration": "约 0.5 小时",
+      "tips": "沿城墙西段徒步至此。",
+      "mapQuery": "Klingentor, Rothenburg ob der Tauber",
+      "rating": 4.5,
+      "reviews": 2600,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "防御塔楼气势十足。",
+          "type": "good"
+        },
+        {
+          "t": "徒步城墙必经地标。",
+          "type": "good"
+        },
+        {
+          "t": "内部展览较小。",
+          "type": "neutral"
+        },
+        {
+          "t": "不能登顶。",
+          "type": "bad"
+        },
+        {
+          "t": "周边没什么配套。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Rothenburg_ob_der_Tauber_Klingentor-20130816-RM-153019.jpg/960px-Rothenburg_ob_der_Tauber_Klingentor-20130816-RM-153019.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Bettelvogtsturm%2C_002.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Bettelvogtsturm%2C_002.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/%C3%84u%C3%9Feres_Klingentor%2C_westliche_Bastionsmauer_Rothenburg_ob_der_Tauber_20230518_0073.jpg/960px-%C3%84u%C3%9Feres_Klingentor%2C_westliche_Bastionsmauer_Rothenburg_ob_der_Tauber_20230518_0073.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Klostergasse_1%2C_001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Klostergasse_1%2C_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Rothenburg_ob_der_Tauber_Klingensch%C3%BCtt_Stadtmauer_zwischen_Klingentor_und_Pulverturm-001.jpg/960px-Rothenburg_ob_der_Tauber_Klingensch%C3%BCtt_Stadtmauer_zwischen_Klingentor_und_Pulverturm-001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Rothenburg_ob_der_Tauber%2C_Steinkreuze_am_Klingentor%2C_003.jpg/960px-Rothenburg_ob_der_Tauber%2C_Steinkreuze_am_Klingentor%2C_003.jpg"
+      ],
+      "id": "klingentor",
+      "visit": "inside"
+    },
+    {
+      "name": "圣沃尔夫冈教堂",
+      "nameEn": "St. Wolfgangskirche",
+      "tag": "哥特晚期 · 木雕祭坛",
+      "selected": true,
+      "intro": "圣沃尔夫冈教堂位于城南山坡、靠近克林根门，是15世纪哥特式晚期建筑的精品。教堂以精湛的木雕祭坛（Wolfgangsaltar）闻名，山墙与塔楼倒映在周边果园中。画家吉埃雷姆斯基曾在此创作名画。从城墙步道俯瞰，红白相间的立面格外醒目。",
+      "hours": "教堂约 09:00–17:00（冬季缩短），弥撒时暂停参观。",
+      "price": "免费（建议捐赠）。",
+      "duration": "约 0.5 小时",
+      "tips": "结合城墙徒步一并游览。",
+      "mapQuery": "St. Wolfgangskirche, Rothenburg ob der Tauber",
+      "rating": 4.5,
+      "reviews": 3400,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "木雕祭坛非常精美。",
+          "type": "good"
+        },
+        {
+          "t": "从城墙看教堂很出片。",
+          "type": "good"
+        },
+        {
+          "t": "位置稍偏，要走一段坡。",
+          "type": "neutral"
+        },
+        {
+          "t": "内部较简朴，门票略贵。",
+          "type": "bad"
+        },
+        {
+          "t": "开放时间有限。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Aleksander_Gierymski_-_Interior_of_St_Wolfgang%27s_Church_in_Rothenburg_-_MNK_II-a-435_-_National_Museum_Krak%C3%B3w.jpg/960px-Aleksander_Gierymski_-_Interior_of_St_Wolfgang%27s_Church_in_Rothenburg_-_MNK_II-a-435_-_National_Museum_Krak%C3%B3w.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Wolfgangskirche%2C_001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Wolfgangskirche%2C_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Interior_20170526_005.jpg/960px-Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Interior_20170526_005.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Exterior_20170526_002.jpg/960px-Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Exterior_20170526_002.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Wolfgangskirche%2C_004.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_Wolfgangskirche%2C_004.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Wolfgangsaltar_20170526_004.jpg/960px-Rothenburg_ob_der_Tauber%2C_Wolfgangskirche%2C_Wolfgangsaltar_20170526_004.jpg"
+      ],
+      "id": "st-wolfgang",
+      "visit": "inside"
+    },
+    {
+      "name": "罗滕堡城墙",
+      "nameEn": "Stadtmauer (City Wall)",
+      "tag": "五公里环城步道 · 登墙远眺",
+      "selected": true,
+      "intro": "罗滕堡完整保留了约2.4公里可步行的 medieval 城墙与40余座塔楼，是德国保存最完好的城防体系之一。沿城墙防御走道（Wehrgang）漫步，可俯瞰红顶民居、陶伯河谷与田园风光。从城堡花园经多米尼加塔到布格门，是摄影与怀古的绝佳路线。傍晚暖光洒在石墙上，最是迷人。",
+      "hours": "城墙步道日出至日落开放；部分塔楼另有开放时间。",
+      "price": "免费（步道）；登个别塔楼另购票。",
+      "duration": "约 1–1.5 小时",
+      "tips": "顺时针走可顺光；穿舒适鞋。",
+      "mapQuery": "Stadtmauer, Rothenburg ob der Tauber",
+      "rating": 4.7,
+      "reviews": 8100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "走上城墙俯瞰全城太美了。",
+          "type": "good"
+        },
+        {
+          "t": "塔楼和石墙保存完好。",
+          "type": "good"
+        },
+        {
+          "t": "部分路段较窄，注意脚下。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季人很多，拍照要排队。",
+          "type": "bad"
+        },
+        {
+          "t": "走完全程有点累。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/GER_Rothenburg_ob_der_Tauber%2C_Stadtmauer_001.jpg/960px-GER_Rothenburg_ob_der_Tauber%2C_Stadtmauer_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Burgtor%2C_007.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Burgtor%2C_007.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Dominikanerturm%2C_001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Dominikanerturm%2C_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dc/Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Dominikanerturm%2C_002.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtmauer%2C_Dominikanerturm%2C_002.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Rothenburg_ob_der_Tauber_Wehrgang-20130816-RM-143922.jpg/960px-Rothenburg_ob_der_Tauber_Wehrgang-20130816-RM-143922.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Rothenburg_ob_der_Tauber_Wehrgang-20130816-RM-144109.jpg/960px-Rothenburg_ob_der_Tauber_Wehrgang-20130816-RM-144109.jpg"
+      ],
+      "id": "stadtmauer",
+      "visit": "inside"
+    },
+    {
+      "name": "中世纪刑事博物馆",
+      "nameEn": "Mittelalterliches Kriminalmuseum",
+      "tag": "千年刑法史 · 独特专题",
+      "selected": true,
+      "intro": "中世纪刑事博物馆（Mittelalterliches Kriminalmuseum）坐落于一座古老的修道院建筑内，展出逾千年刑法史中的刑具、镣铐与审判文书。它用略带惊悚的方式讲述从中世纪到近代的司法与刑罚，是德国最独特的专题博物馆之一。适合对历史与人性议题感兴趣的游客。",
+      "hours": "博物馆 10:00–17:00（冬季至 16:00），周一常休。",
+      "price": "门票约 €7，优惠票 €5。",
+      "duration": "约 1–1.5 小时",
+      "tips": "对刑具敏感者酌情进入。",
+      "mapQuery": "Mittelalterliches Kriminalmuseum, Rothenburg ob der Tauber",
+      "rating": 4.4,
+      "reviews": 5200,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "刑具展品大开眼界。",
+          "type": "good"
+        },
+        {
+          "t": "历史叙述很生动。",
+          "type": "good"
+        },
+        {
+          "t": "部分内容偏惊悚。",
+          "type": "neutral"
+        },
+        {
+          "t": "空间不大，票价偏高。",
+          "type": "bad"
+        },
+        {
+          "t": "文字说明多为德文。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/Mittelalterliches_Kriminalmuseum_Rothenburg_Lutherausstellung_Zwischenebene.jpg/960px-Mittelalterliches_Kriminalmuseum_Rothenburg_Lutherausstellung_Zwischenebene.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Mittelalterliches_Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Eingangsschild.JPG/960px-Mittelalterliches_Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Eingangsschild.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Mittelalterliches_Kriminalmuseum_-_Rothenburg_ob_der_Tauber_-_Germany_2017_%282%29.jpg/960px-Mittelalterliches_Kriminalmuseum_-_Rothenburg_ob_der_Tauber_-_Germany_2017_%282%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Mittelalterliches_Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Geb%C3%A4uder%C3%BCckansicht.JPG/960px-Mittelalterliches_Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Geb%C3%A4uder%C3%BCckansicht.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Flickr_-_tm-md.jpg/960px-Kriminalmuseum_Rothenburg_ob_der_Tauber_-_Flickr_-_tm-md.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Rothenburg_ob_der_Tauber%2C_Burggasse_3%2C_Ansicht_von_S%C3%BCden-20160108-026.jpg/960px-Rothenburg_ob_der_Tauber%2C_Burggasse_3%2C_Ansicht_von_S%C3%BCden-20160108-026.jpg"
+      ],
+      "id": "kriminalmuseum",
+      "visit": "outside"
+    },
+    {
+      "id": "roederturm-rothenburg",
+      "name": "勒德塔 (Röderturm)",
+      "nameEn": "Röderturm",
+      "tag": "罗滕堡城墙塔楼 · 全景机位",
+      "selected": true,
+      "rating": 4.5,
+      "reviews": 3000,
+      "ratingSource": "Google",
+      "mapQuery": "Röderturm, Rothenburg ob der Tauber",
+      "intro": "勒德塔（Röderturm）是罗滕堡保存完好的中世纪城墙塔楼之一，位于古城东侧的罗德门附近。作为罗滕堡完整环城防御体系的一部分，塔楼仍可沿狭窄旋梯攀登，登顶后能将陶伯河谷与连绵的木筋墙屋顶尽收眼底。沿城墙步道漫步是这座「童话小镇」最经典的体验，勒德塔正是俯拍全景与远眺乡野的绝佳机位，也是城墙环线中人气最高的一站。",
+      "hours": "塔楼登顶通常 4–10 月 09:30–17:00（视天气与维护）；城墙外围步道全天可步行。",
+      "price": "登塔约 €2.5；沿城墙步道散步免费。",
+      "duration": "约 30–60 分钟",
+      "tips": "登顶旋梯较窄陡，穿舒适鞋；城墙步道从罗德门一段最美，可顺路走到市集广场。清晨或傍晚光线柔和、游客少，拍照最佳。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_R%C3%B6derturm%2C_001.jpg/960px-Rothenburg_ob_der_Tauber%2C_Stadtbefestigung%2C_R%C3%B6derturm%2C_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/39/Faulturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0014.jpg/960px-Faulturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0014.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Galgentorturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0024.jpg/960px-Galgentorturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0024.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Henkersturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0028.jpg/960px-Henkersturm%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20230518_0028.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_148.jpg/960px-Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_148.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_151.jpg/960px-Jakobskirche%2C_vom_R%C3%B6derturm_Rothenburg_ob_der_Tauber_20210725_151.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "爬上塔顶看陶伯河谷和整片红顶老城，值回票价，罗滕堡最美的角度就在这。",
+          "type": "good"
+        },
+        {
+          "t": "城墙步道本身免费又安静，沿着走一圈像穿越回中世纪，太治愈了。",
+          "type": "good"
+        },
+        {
+          "t": "登塔旋梯很窄很陡，背包大的有点吃力；塔内空间小。",
+          "type": "neutral"
+        },
+        {
+          "t": "冬季塔楼常关闭，白跑一趟；去前最好确认开放。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季游客多，塔顶平台转身都难，想拍空镜得赶早。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-10-1",
+      "name": "罗腾堡梅里安酒店 Hotel Merian Rothenburg",
+      "nameEn": "",
+      "tag": "物流 · 取车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "取车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "罗腾堡梅里安酒店 Hotel Merian Rothenburg"
+    },
+    {
+      "id": "log-10-2",
+      "name": "Hotel Windsor in Köln",
+      "nameEn": "",
+      "tag": "物流 · 停车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "停车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Hotel Windsor in Köln"
+    },
+    {
+      "name": "圣安德烈亚斯教堂",
+      "nameEn": "St. Andreas",
+      "tag": "罗马式 · 三联祭坛画",
+      "selected": true,
+      "intro": "圣安德烈亚斯教堂是科隆老城内一座宏伟的罗马式 basilica，以收藏早期基督教殉道者圣阿尔伯特的遗骸与布鲁恩（Bruyn）家族的三联祭坛画著称。高耸的十字交叉塔与庄重的中殿，体现了莱茵罗马式的厚重之美。教堂至今仍是活跃的堂区，气氛宁静。",
+      "hours": "教堂约 09:00–18:00。",
+      "price": "免费（建议捐赠）。",
+      "duration": "约 0.5 小时",
+      "tips": "欣赏布鲁恩三联画。",
+      "mapQuery": "St. Andreas, Köln",
+      "rating": 4.4,
+      "reviews": 2500,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "三联祭坛画精美。",
+          "type": "good"
+        },
+        {
+          "t": "安静庄严。",
+          "type": "good"
+        },
+        {
+          "t": "内部照明偏暗。",
+          "type": "neutral"
+        },
+        {
+          "t": "名气不如大教堂。",
+          "type": "bad"
+        },
+        {
+          "t": "开放时间有限。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/Bartholom%C3%A4us_Bruyn%2C_Triptychon_St._Andreas%2C_K%C3%B6ln_%28Au%C3%9Fenseiten%29.jpg/960px-Bartholom%C3%A4us_Bruyn%2C_Triptychon_St._Andreas%2C_K%C3%B6ln_%28Au%C3%9Fenseiten%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/43/K%C3%B6ln_St._Andreas_Vierungsturm.jpg/960px-K%C3%B6ln_St._Andreas_Vierungsturm.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/K%C3%B6ln_St._Andreas_Chor.jpg/960px-K%C3%B6ln_St._Andreas_Chor.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/K%C3%B6ln_St._Andreas_Innen_1.jpg/960px-K%C3%B6ln_St._Andreas_Innen_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/K%C3%B6ln_St._Andreas_Innen_2.jpg/960px-K%C3%B6ln_St._Andreas_Innen_2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/K%C3%B6ln_St._Andreas_Innen_Chor_1.jpg/960px-K%C3%B6ln_St._Andreas_Innen_Chor_1.jpg"
+      ],
+      "id": "st-andreas",
+      "visit": "inside"
+    },
+    {
+      "name": "科隆大教堂",
+      "nameEn": "Kölner Dom (Cologne Cathedral)",
+      "tag": "哥特巅峰 · 世界遗产",
+      "selected": true,
+      "intro": "科隆大教堂是德国最负盛名的哥特式建筑，始建于1248年、1880年才完全落成，双塔高157米，是世界最高的教堂双塔之一。内部珍藏三王圣龛（Dreikönigsschrein）与绚丽彩窗。作为联合国教科文世界遗产与科隆的象征，它常年矗立于莱茵河畔，夜景尤为壮观。",
+      "hours": "教堂 06:00–19:00（弥撒时部分区域关闭）；登塔约 09:00–18:00。",
+      "price": "入内免费；登塔约 €4。",
+      "duration": "约 1–2 小时",
+      "tips": "登塔看全景需排队；着装端庄。",
+      "mapQuery": "Kölner Dom, Köln",
+      "rating": 4.7,
+      "reviews": 95000,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "宏伟到词穷，必看。",
+          "type": "good"
+        },
+        {
+          "t": "夜景灯光太美了。",
+          "type": "good"
+        },
+        {
+          "t": "登塔要爬很多阶。",
+          "type": "neutral"
+        },
+        {
+          "t": "人太多太挤。",
+          "type": "bad"
+        },
+        {
+          "t": "弥撒时进不去内部。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/K%C3%B6lner_Dom_2013-08-04-001.JPG/960px-K%C3%B6lner_Dom_2013-08-04-001.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/K%C3%B6lner_Dom_2013-08-04-005.JPG/960px-K%C3%B6lner_Dom_2013-08-04-005.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/K%C3%B6lner_Dom_nachts_2013.jpg/960px-K%C3%B6lner_Dom_nachts_2013.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/K%C3%B6lner_Dom_von_Osten.jpg/960px-K%C3%B6lner_Dom_von_Osten.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/K%C3%B6lner_Dom_-_Ger%C3%BCstbau_Nordturm_%286515-17%29.jpg/960px-K%C3%B6lner_Dom_-_Ger%C3%BCstbau_Nordturm_%286515-17%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/2025-06-10-Dom_Burgmauer-3409.jpg/960px-2025-06-10-Dom_Burgmauer-3409.jpg"
+      ],
+      "id": "koelner-dom",
+      "visit": "inside"
+    },
+    {
+      "name": "路德维希博物馆",
+      "nameEn": "Museum Ludwig",
+      "tag": "现代艺术 · 毕加索",
+      "selected": true,
+      "intro": "路德维希博物馆紧邻大教堂，以20世纪与当代艺术收藏著称，拥有世界顶级的毕加索版画系列与大量波普艺术、表现主义作品。建筑本身线条利落，常设展与特展兼顾经典与先锋。对现代艺术爱好者而言，这里是科隆不可错过的文化地标。",
+      "hours": "周二至周日 10:00–18:00（周四至22:00），周一休。",
+      "price": "门票约 €13。",
+      "duration": "约 1.5–2 小时",
+      "tips": "毕加索展区必看。",
+      "mapQuery": "Museum Ludwig, Köln",
+      "rating": 4.5,
+      "reviews": 9000,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "毕加索收藏一流。",
+          "type": "good"
+        },
+        {
+          "t": "现代艺术爱好者天堂。",
+          "type": "good"
+        },
+        {
+          "t": "部分当代展品看不懂。",
+          "type": "neutral"
+        },
+        {
+          "t": "门票偏贵。",
+          "type": "bad"
+        },
+        {
+          "t": "特展常需另购票。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Cologne_Museum_Ludwig_Roof_at_Dusk.jpg/960px-Cologne_Museum_Ludwig_Roof_at_Dusk.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/GER_K%C3%B6ln%2C_Museum_Ludwig_001.jpg/960px-GER_K%C3%B6ln%2C_Museum_Ludwig_001.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Museum_Ludwig%2C_K%C3%B6ln%2C_M%C3%A4rz_2023.jpg/960px-Museum_Ludwig%2C_K%C3%B6ln%2C_M%C3%A4rz_2023.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Museum_Ludwig_K%C3%B6ln_-_S%C3%BCdansicht.jpg/960px-Museum_Ludwig_K%C3%B6ln_-_S%C3%BCdansicht.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Museum_Ludwig_K%C3%B6ln_-_S%C3%BCdeingang_-_Schriftzug.jpg/960px-Museum_Ludwig_K%C3%B6ln_-_S%C3%BCdeingang_-_Schriftzug.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Museum_Ludwig_in_K%C3%B6ln.jpg/960px-Museum_Ludwig_in_K%C3%B6ln.jpg"
+      ],
+      "id": "museum-ludwig",
+      "visit": "inside"
+    },
+    {
+      "name": "霍亨索伦桥",
+      "nameEn": "Hohenzollernbrücke",
+      "tag": "爱情锁 · 铁路地标",
+      "selected": true,
+      "intro": "霍亨索伦桥横跨莱茵河，连接火车站与老城，是科隆最繁忙的铁路桥。桥上密密麻麻挂满了情侣的爱情锁，成为独特的城市风景。从桥上可正对科隆大教堂取景，是摄影与漫步的热门之地。清晨或黄昏时分，铁桥、锁墙与教堂同框最为动人。",
+      "hours": "桥体全天开放；挂锁随意。",
+      "price": "免费（挂锁自费）。",
+      "duration": "约 0.5 小时",
+      "tips": "带好锁具；清晨人少。",
+      "mapQuery": "Hohenzollernbrücke, Köln",
+      "rating": 4.5,
+      "reviews": 21000,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "爱情锁墙很浪漫。",
+          "type": "good"
+        },
+        {
+          "t": "正对大教堂机位绝了。",
+          "type": "good"
+        },
+        {
+          "t": "桥上风大注意保暖。",
+          "type": "neutral"
+        },
+        {
+          "t": "锁太多略显杂乱。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季人挤人。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Hohenzollernbr%C3%BCcke_K%C3%B6ln.jpg/960px-Hohenzollernbr%C3%BCcke_K%C3%B6ln.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bc/K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1809.jpg/960px-K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1809.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1870.jpg/960px-K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1870.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Hohenzollernbr%C3%BCcke_K%C3%B6ln_von_oben.jpg/960px-Hohenzollernbr%C3%BCcke_K%C3%B6ln_von_oben.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_und_Dom_--_2014_--_1866.jpg/960px-K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_und_Dom_--_2014_--_1866.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1890.jpg/960px-K%C3%B6ln%2C_Hohenzollernbr%C3%BCcke_--_2014_--_1890.jpg"
+      ],
+      "id": "hohenzollernbruecke",
+      "visit": "inside"
+    },
+    {
+      "name": "科隆三角观景台",
+      "nameEn": "KölnTriangle (Panorama-Deck)",
+      "tag": "103米 · 全景天台",
+      "selected": true,
+      "intro": "科隆三角观景台位于会展中心旁的 KölnTriangle 大楼顶层（103米），是观赏科隆全景的最佳地点。透过落地窗与露天平台，可将科隆大教堂、霍亨索伦桥与莱茵河尽收眼底，并设有免费望远镜与城市解说牌。",
+      "hours": "约 11:00–21:00（冬季提前）。",
+      "price": "成人约 €5。",
+      "duration": "约 30–45 分钟",
+      "tips": "傍晚上楼既能看日景也能等夜景。",
+      "mapQuery": "KölnTriangle, Köln",
+      "rating": 4.5,
+      "reviews": 5400,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "正对大教堂视角无敌。",
+          "type": "good"
+        },
+        {
+          "t": "望远镜免费很贴心。",
+          "type": "good"
+        },
+        {
+          "t": "电梯要等一会儿。",
+          "type": "neutral"
+        },
+        {
+          "t": "风大有点冷。",
+          "type": "bad"
+        },
+        {
+          "t": "门票稍贵。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b9/Cologne_Germany_K%C3%B6lnTriangle-Tower-02.jpg/960px-Cologne_Germany_K%C3%B6lnTriangle-Tower-02.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a3/2017-01-06-K%C3%B6lnTriangle-9584.jpg/960px-2017-01-06-K%C3%B6lnTriangle-9584.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/2017-01-06-K%C3%B6lnTriangle-9585.jpg/960px-2017-01-06-K%C3%B6lnTriangle-9585.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/K%C3%B6lnTriangle_%280684%29.jpg/960px-K%C3%B6lnTriangle_%280684%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/K%C3%B6lnTriangle_an_der_K%C3%B6lnmesse_-_panoramio.jpg/960px-K%C3%B6lnTriangle_an_der_K%C3%B6lnmesse_-_panoramio.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/17/Lanxess_Tower_K%C3%B6ln_und_K%C3%B6lnTriangle_im_Sonnenuntergang-2020.jpg/960px-Lanxess_Tower_K%C3%B6ln_und_K%C3%B6lnTriangle_im_Sonnenuntergang-2020.jpg"
+      ],
+      "id": "koelntriangle",
+      "visit": "inside"
+    },
+    {
+      "name": "大圣马丁教堂",
+      "nameEn": "Groß St. Martin",
+      "tag": "罗马式 · 河岸塔影",
+      "selected": true,
+      "intro": "大圣马丁教堂是科隆十二座罗马式教堂中最醒目的地标，以其中心高达耸的十字形塔楼与莱茵河畔的倒影闻名。教堂最早可追溯至公元10世纪，内部简朴而庄严。从河对岸或霍亨索伦桥望去的塔影，是科隆经典的城市剪影之一。",
+      "hours": "教堂约 08:00–18:00，活动期间或有变动。",
+      "price": "免费（建议捐赠）。",
+      "duration": "约 0.5 小时",
+      "tips": "从河对岸拍倒影。",
+      "mapQuery": "Groß St. Martin, Köln",
+      "rating": 4.5,
+      "reviews": 6000,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "塔楼倒影绝美。",
+          "type": "good"
+        },
+        {
+          "t": "罗马式建筑典范。",
+          "type": "good"
+        },
+        {
+          "t": "内部较简朴。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季旅行团多。",
+          "type": "bad"
+        },
+        {
+          "t": "周边在维修。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/K%C3%B6ln%2C_Gro%C3%9F-St.-Martin-Kirche_--_2014_--_1807.jpg/960px-K%C3%B6ln%2C_Gro%C3%9F-St.-Martin-Kirche_--_2014_--_1807.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Au%C3%9Fenansicht%29_%281%29.jpg/960px-K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Au%C3%9Fenansicht%29_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Au%C3%9Fenansicht%29_%282%29.jpg/960px-K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Au%C3%9Fenansicht%29_%282%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/63/K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Innenansicht%29_%281%29.jpg/960px-K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Innenansicht%29_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/88/K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Innenansicht%29_%283%29.jpg/960px-K%C3%B6ln%2C_Gro%C3%9F_St._Martin_%28Innenansicht%29_%283%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/78/K%C3%B6ln_-_Gro%C3%9F_St._Martin_vom_Dom.jpg/960px-K%C3%B6ln_-_Gro%C3%9F_St._Martin_vom_Dom.jpg"
+      ],
+      "id": "gross-st-martin",
+      "visit": "inside"
+    },
+    {
+      "name": "科隆市政厅",
+      "nameEn": "Kölner Rathaus (Historisches Rathaus)",
+      "tag": "哥特厅塔 · 汉萨厅",
+      "selected": true,
+      "intro": "科隆市政厅是德国最古老的城市厅舍之一，其1330年代建成的哥特式塔楼与汉萨厅（Hansasaal）最具看点。门廊上137尊雕像记录着历代帝王，是了解科隆中世纪自治与汉萨贸易地位的最佳窗口。",
+      "hours": "外观全天可看；汉萨厅约 10:00–18:00（周一或关闭）。",
+      "price": "外观免费；汉萨厅约 €3。",
+      "duration": "约 30–60 分钟",
+      "tips": "注意塔楼上的“丑角”雕像传说。",
+      "mapQuery": "Kölner Rathaus, Köln",
+      "rating": 4.3,
+      "reviews": 2600,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "哥特塔楼细节很精美。",
+          "type": "good"
+        },
+        {
+          "t": "汉萨厅历史感强。",
+          "type": "good"
+        },
+        {
+          "t": "内部导览需排队。",
+          "type": "neutral"
+        },
+        {
+          "t": "标识不太清楚。",
+          "type": "bad"
+        },
+        {
+          "t": "周边总是很拥挤。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1908.jpg/960px-K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1908.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1909.jpg/960px-K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1909.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1910.jpg/960px-K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1910.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/37/K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1912.jpg/960px-K%C3%B6ln%2C_Historisches_Rathaus_--_2014_--_1912.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/K%C3%B6lner_Rathaus_-_Fasade.jpg/960px-K%C3%B6lner_Rathaus_-_Fasade.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/Rathaus-K%C3%B6ln.JPG/960px-Rathaus-K%C3%B6ln.JPG"
+      ],
+      "id": "rathaus-2",
+      "visit": "inside"
+    },
+    {
+      "name": "圣乌苏拉教堂",
+      "nameEn": "St. Ursula (Kirche St. Ursula)",
+      "tag": "黄金圣骨匣 · 万名处女",
+      "selected": true,
+      "intro": "圣乌苏拉教堂以珍藏“黄金圣骨匣”（Goldene Kammer）闻名，墙内嵌有约1.1万具中世纪传为圣乌苏拉与万名处女的遗骸，景象独特而震撼。它是科隆十二座罗马式教堂之一，也是欧洲最特殊的圣髑收藏地。",
+      "hours": "约 10:00–18:00（圣骨匣室另购票）。",
+      "price": "教堂免费；黄金圣骨匣室约 €2。",
+      "duration": "约 30–45 分钟",
+      "tips": "圣骨匣室较小，适合安静参观。",
+      "mapQuery": "St. Ursula, Köln",
+      "rating": 4.4,
+      "reviews": 2100,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "圣骨匣震撼到难以置信。",
+          "type": "good"
+        },
+        {
+          "t": "安静的小众教堂很特别。",
+          "type": "good"
+        },
+        {
+          "t": "门有时关着要碰运气。",
+          "type": "neutral"
+        },
+        {
+          "t": "装饰略显阴森。",
+          "type": "bad"
+        },
+        {
+          "t": "标牌说明不够多。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/St._Ursula_K%C3%B6ln_%285020-22%29.jpg/960px-St._Ursula_K%C3%B6ln_%285020-22%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/St._Ursula_K%C3%B6ln_%285014-16%29.jpg/960px-St._Ursula_K%C3%B6ln_%285014-16%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/St._Ursula_K%C3%B6ln_-_Ursulab%C3%BCsten_und_Schreine_im_Chor_%283221-23%29.jpg/960px-St._Ursula_K%C3%B6ln_-_Ursulab%C3%BCsten_und_Schreine_im_Chor_%283221-23%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/K%C3%B6ln%2C_St._Ursula_%28Innenansicht%29_%281%29.jpg/960px-K%C3%B6ln%2C_St._Ursula_%28Innenansicht%29_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/K%C3%B6ln%2C_St._Ursula_%28Innenansicht%29_%282%29.jpg/960px-K%C3%B6ln%2C_St._Ursula_%28Innenansicht%29_%282%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/St._Ursula_K%C3%B6ln%2C_Pieta.jpg/960px-St._Ursula_K%C3%B6ln%2C_Pieta.jpg"
+      ],
+      "id": "st-ursula",
+      "visit": "inside"
+    },
+    {
+      "name": "圣格里安教堂",
+      "nameEn": "St. Gereon (Basilica of St. Gereon)",
+      "tag": "十边形穹顶 · 罗马式",
+      "selected": true,
+      "intro": "圣格里安教堂以巨大的十边形椭圆形穹顶著称，是阿尔卑斯以北最大的穹顶之一，融合了罗马式与哥特式元素。其下的早期教堂遗迹可追溯至4世纪，是科隆十二座罗马式教堂中最具建筑特色的一座。",
+      "hours": "约 10:00–18:00（弥撒时部分关闭）。",
+      "price": "免费入内。",
+      "duration": "约 30–45 分钟",
+      "tips": "穹顶与地下早期遗迹都值得看。",
+      "mapQuery": "St. Gereon, Köln",
+      "rating": 4.5,
+      "reviews": 1800,
+      "ratingSource": "Tripadvisor / Google 综合",
+      "reviewList": [
+        {
+          "t": "十边形穹顶令人惊艳。",
+          "type": "good"
+        },
+        {
+          "t": "比大教堂安静很多。",
+          "type": "good"
+        },
+        {
+          "t": "位置稍偏需导航。",
+          "type": "neutral"
+        },
+        {
+          "t": "内部光线偏暗。",
+          "type": "bad"
+        },
+        {
+          "t": "讲解牌多为德文。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/Decagonal_Dome_of_St_Gereon%27s_Basilica%2C_Cologne.jpg/960px-Decagonal_Dome_of_St_Gereon%27s_Basilica%2C_Cologne.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/Altar_der_Krypta%2C_St._Gereon%2C_K%C3%B6ln-4704.jpg/960px-Altar_der_Krypta%2C_St._Gereon%2C_K%C3%B6ln-4704.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d1/K%C3%B6ln%2C_St._Gereon_%28Au%C3%9Fenansicht%29_%281%29.jpg/960px-K%C3%B6ln%2C_St._Gereon_%28Au%C3%9Fenansicht%29_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/K%C3%B6ln%2C_St._Gereon_%28Au%C3%9Fenansicht%29_%282%29.jpg/960px-K%C3%B6ln%2C_St._Gereon_%28Au%C3%9Fenansicht%29_%282%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/K%C3%B6ln%2C_St._Gereon_%28Innenansicht%29_%281%29.jpg/960px-K%C3%B6ln%2C_St._Gereon_%28Innenansicht%29_%281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/K%C3%B6ln%2C_St._Gereon_%28Innenansicht%29_%284%29.jpg/960px-K%C3%B6ln%2C_St._Gereon_%28Innenansicht%29_%284%29.jpg"
+      ],
+      "id": "st-gereon",
+      "visit": "inside"
+    },
+    {
+      "id": "hotel-10",
+      "name": "Hotel Windsor in Köln",
+      "nameEn": "",
+      "tag": "物流 · 住宿",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "住宿",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Hotel Windsor in Köln"
+    }
+  ],
+  "_day": {
+    "n": 10,
+    "date": "2026-10-09",
+    "weekday": "周五",
+    "cities": [
+      "罗滕堡",
+      "科隆"
+    ],
+    "chainLabel": "罗滕堡➡️科隆",
+    "start": "罗腾堡梅里安酒店 Hotel Merian Rothenburg",
+    "hotel": "Hotel Windsor in Köln",
+    "meals": {
+      "b": "—",
+      "l": "—",
+      "d": "—"
+    }
+  }
+};
+
+/* =========================== 渲染逻辑（一般无需修改） =========================== */
+
+function stars(r){
+  if(r==null || isNaN(r)) return "暂无";
+  const full = Math.round(r);
+  return "★".repeat(full) + "☆".repeat(5-full);
+}
+const TYPE_LABEL = {good:"好评", neutral:"中评", bad:"差评"};
+function mapSrc(q, z){
+  return "https://maps.google.com/maps?q=" + encodeURIComponent(q) + "&z=" + (z||15) + "&output=embed";
+}
+const STORE_KEY = DATA._storeKey || ("taf-sel-" + (DATA.cityEn||DATA.city||"travel"));
+/* 三态参观状态：inside=入内参观 / outside=外部参观 / null=不参观。
+   同时兼容旧数据的布尔 selected（true→inside，false→不参观）。 */
+function getVisit(a){
+  if(a.visit==="inside"||a.visit==="outside") return a.visit;
+  if(a.selected===true) return "inside";
+  return null;
+}
+function loadStates(){
+  // 优先从 localStorage 读取已保存的参观状态（按城市隔离）；无记录时回退到 DATA 默认。
+  const map = new Map();
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw){
+      const saved = JSON.parse(raw);
+      if(saved && saved.states){
+        DATA.attractions.forEach(a=> map.set(a.id, saved.states[a.id]||null));
+        return map;
+      }
+      // 兼容旧版只存 ids 的存档
+      if(saved && Array.isArray(saved.ids)){
+        const s = new Set(saved.ids);
+        DATA.attractions.forEach(a=> map.set(a.id, s.has(a.id)?"inside":null));
+        return map;
+      }
+    }
+  } catch(e){ /* localStorage 不可用时回退默认 */ }
+  DATA.attractions.forEach(a=>{ if(a.kind!=="note") map.set(a.id, getVisit(a)); });
+  return map;
+}
+function writeSel(){
+  // 写入机器可读的 #taf-selection JSON（供其它 skill 读取）：记录全部景点及其三态参观状态
+  // （visit: "inside" 入内参观 / "outside" 外部参观 / null 不参观），与 localStorage 存档保持一致。
+  const sel = DATA.attractions.map(a=>({id:a.id, name:a.name, visit: getVisit(a) || null}));
+  const obj = { city: DATA.city, cityEn: DATA.cityEn, total: DATA.attractions.length, selected: sel };
+  document.getElementById("taf-selection").textContent = JSON.stringify(obj);
+}
+function updateChip(id, v){
+  const chip = document.querySelector('nav.toc a[data-id="'+id+'"]');
+  if(chip){
+    chip.classList.remove("chip-inside","chip-outside","chip-none");
+    chip.classList.add(v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none");
+  }
+}
+function applyVisit(id, v){
+  // v: "inside" | "outside" | null
+  const a = DATA.attractions.find(x=>x.id===id);
+  if(a){ a.visit = v; a.selected = v!==null; }
+  const card = document.getElementById(id);
+  if(card){
+    const btn = card.querySelector(".visit-toggle");
+    if(btn){
+      btn.classList.remove("vt-none","vt-inside","vt-outside");
+      btn.classList.add(v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none");
+      const ico = btn.querySelector(".vt-ico");
+      const txt = btn.querySelector(".vt-txt");
+      if(ico) ico.textContent = v==="inside"?"✓":v==="outside"?"○":"○";
+      if(txt) txt.textContent = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    }
+    card.setAttribute("data-visit", v||"none");
+    card.setAttribute("data-selected", v!==null ? "true":"false");
+  }
+  updateChip(id, v);
+  writeSel();
+  markDirty(); // 标记有未保存更改
+}
+function cycleVisit(id){
+  const a = DATA.attractions.find(x=>x.id===id);
+  const cur = a ? (a.visit==="inside"?"inside":a.visit==="outside"?"outside":null) : null;
+  const next = cur==="inside" ? "outside" : cur==="outside" ? null : "inside";
+  applyVisit(id, next);
+}
+
+/* 点击标签栏 chip 后跳转到对应卡片：桌面端平滑滚动到锚点，手机端横向滑动到卡片 */
+function navigateToCard(id, idx){
+  if(window.matchMedia("(max-width:760px)").matches){
+    var card = document.getElementById(id);
+    var deck = document.getElementById("list");
+    if(card && deck){
+      var navH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--nav-h")) || 56;
+      var deckTop = deck.getBoundingClientRect().top + window.scrollY - navH - 8;
+      window.scrollTo({top: Math.max(0, deckTop), behavior:"smooth"});
+      var cardLeft = card.getBoundingClientRect().left - deck.getBoundingClientRect().left + deck.scrollLeft;
+      deck.scrollTo({left: cardLeft, behavior:"smooth"});
+      var resetTop = function(){ card.scrollTop = 0; };
+      requestAnimationFrame(resetTop);
+      setTimeout(resetTop, 450);
+    }
+  } else {
+    var card = document.getElementById(id);
+    var head = card ? card.querySelector(".a-head") : null;
+    if(head) head.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+  centerChip(idx);
+}
+
+/* 物流简化卡（停车/取车）：仅标题、谷歌地图、费用/说明 */
+function renderLogistics(a, i){
+  const list = document.getElementById("list");
+  const toc = document.getElementById("chips");
+  if(!a.id) a.id = "log-" + i;
+  const aEl = document.createElement("section");
+  aEl.className = "attraction logistics";
+  aEl.id = a.id;
+  aEl.setAttribute("data-visit", "none");
+  aEl.setAttribute("data-selected", "false");
+  const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || a.name);
+  aEl.innerHTML = `
+    <div class="left">
+      <div class="a-head"><h2>${a.name}</h2></div>
+      <div class="tag-row"><span class="tag">${a.tag || ("物流 · " + (a.noteType||""))}</span></div>
+      <div class="facts">
+        <div class="fact"><h4>${a.noteType==="取车"?"取车说明":a.noteType==="住宿"?"住宿":"停车费用"}</h4><p>${a.price || "—"}</p></div>
+      </div>
+    </div>
+    <aside class="right">
+      <div class="mapcard">
+        <iframe class="map-frame" loading="lazy" title="Google 地图"
+          src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+        <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+      </div>
+    </aside>`;
+  list.appendChild(aEl);
+  const chip = document.createElement("a");
+  chip.href = "#" + aEl.id;
+  chip.dataset.id = a.id;
+  chip.dataset.idx = i;
+  chip.textContent = a.name;
+  chip.className = "chip-none";
+  chip.addEventListener("click", function(e){ e.preventDefault(); navigateToCard(aEl.id, i); });
+  toc.appendChild(chip);
+}
+
+/* 轻量 toast 提示（自包含，首次调用时动态创建元素，不占页面空间） */
+function showToast(msg){
+  let t=document.getElementById("taf-toast");
+  if(!t){
+    t=document.createElement("div");
+    t.id="taf-toast";
+    t.style.cssText="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:rgba(20,30,50,.92);color:#fff;padding:10px 18px;border-radius:10px;font:600 13px/1.4 system-ui,-apple-system,sans-serif;z-index:9999;opacity:0;transition:opacity .25s;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.25)";
+    document.body.appendChild(t);
+  }
+  t.textContent=msg; t.style.opacity="1";
+  clearTimeout(showToast._t);
+  showToast._t=setTimeout(()=>{ t.style.opacity="0"; }, 2200);
+}
+
+/* 保存更改：把当前选取写入本机浏览器 localStorage（按城市隔离）。
+   切换选取不会自动保存，需点击标签栏右侧「保存更改」按钮；保存前按钮呈橙色警示「未保存」。 */
+function markDirty(){
+  const b=document.getElementById("saveBtn");
+  if(b) b.classList.add("dirty");
+}
+function saveSelection(){
+  const states = {};
+  DATA.attractions.forEach(a=>{ states[a.id] = getVisit(a); });
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({city:DATA.city, states}));
+    const b=document.getElementById("saveBtn");
+    if(b) b.classList.remove("dirty");
+    showToast("已保存 ✓");
+  } catch(e){
+    showToast("保存失败：" + (e && e.message ? e.message : e));
+  }
+}
+
+function render(){
+  document.getElementById("flag").textContent = DATA.flag || "📍";
+  if(DATA._dayNum){
+    const cityParts = (DATA._allCities || []).map(c => c.cn + (c.en ? "（"+c.en+"）" : ""));
+    document.getElementById("cityTitle").textContent = DATA.country + " · 第" + DATA._dayNum + "天 · " + cityParts.join(" · ");
+    document.title = DATA.country + " · 第" + DATA._dayNum + "天" + (cityParts.length ? " · " + cityParts.join(" · ") : "");
+    document.getElementById("region").textContent = (DATA._date || "") + (DATA._weekday ? " " + DATA._weekday : "");
+  } else {
+    document.getElementById("cityTitle").textContent = DATA.country + " · " + DATA.city + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.title = DATA.country + " · " + DATA.city + " 景点导览" + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.getElementById("region").textContent = DATA.region || "";
+  }
+  document.getElementById("cityIntro").textContent = DATA.intro || "";
+  const mapCity = DATA._allCities ? (DATA._allCities[0].en || DATA._allCities[0].cn) : (DATA.cityEn || DATA.city);
+  document.getElementById("cityMap").src = mapSrc(mapCity + ", " + (DATA.countryEn||DATA.country), DATA.mapZoom || 5);
+  if(DATA._home){
+    document.body.classList.add("home");
+    document.getElementById("cityTitle").textContent = DATA.city || "行程总览";
+    document.title = (DATA.city||"行程总览") + " · 行程总览";
+    document.getElementById("region").textContent = DATA.region || "";
+    document.getElementById("cityIntro").textContent = DATA.intro || "";
+    try{document.querySelector("nav.toc").style.display="none";}catch(e){}
+    renderHome();
+    bindTotop();
+    return;
+  }
+
+  const toc = document.getElementById("chips");
+  const list = document.getElementById("list");
+  /* 重绘前先清空容器，保证 render() 可安全重复调用（如云端同步后二次重绘），
+     否则会叠加出重复卡片与重复标签栏 chip。 */
+  toc.innerHTML = "";
+  list.innerHTML = "";
+  /* 先为所有景点补齐稳定且唯一的 id（优先用自带 id，否则回退 "a"+序号），
+     供锚点、标签栏 data-id、勾选回传与保存集合统一使用——缺失 id 会导致
+     标签亮显错位、勾选与卡片不同步、保存失效。 */
+  DATA.attractions.forEach((a,i)=>{ if(!a.id) a.id = "a"+i; });
+  const stateMap = loadStates();
+  DATA.attractions.forEach((a,i)=>{
+    if(a.kind==="note"){ renderNote(a); return; }
+    if(a.kind==="logistics" || a.logistics){ renderLogistics(a,i); return; }
+    const v = stateMap.get(a.id) || null;
+    a.visit = v;
+    a.selected = v!==null;
+    const visitClass = v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none";
+    const visitIco = v==="inside"?"✓":v==="outside"?"○":"○";
+    const visitTxt = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    const phNote = a.placeholder ? `<span class="ph-note">⚠ 该景点暂未收录详细导览，可后续用景点搜罗补充</span>` : "";
+    const aEl = document.createElement("section");
+    aEl.className = "attraction" + (a.placeholder?" placeholder":"");
+    aEl.id = a.id || ("a"+i);
+    aEl.setAttribute("data-visit", v||"none");
+    aEl.setAttribute("data-selected", v!==null ? "true" : "false");
+    const imgs = (a.photos||[]).map(p=>`<img src="${p}" alt="${a.name}" loading="lazy" onclick="openLb('${p}')">`).join("");
+    const reviewItems = (a.reviewList||[]).map(r=>{
+      let t="good", txt=r;
+      if(r && typeof r==="object"){ t=r.type||"good"; txt=r.t||r.text||""; }
+      const lb = TYPE_LABEL[t]||"好评";
+      return `<li class="review-item rt-${t}"><span class="rbadge rb-${t}">${lb}</span><span class="rtext">${txt}</span></li>`;
+    }).join("");
+    const scoreHtml = (a.rating!=null)
+      ? `<span class="stars">${stars(a.rating)}</span><span class="score">${a.rating}</span><span class="meta"> / 5</span>`
+      : `<span class="stars">${stars(a.rating)}</span>`;
+    const extraFacts = [
+      (a.duration? `<div class="fact"><h4>建议时长</h4><p>${a.duration}</p></div>` : ""),
+      (a.tips? `<div class="fact"><h4>实用贴士</h4><p>${a.tips}</p></div>` : "")
+    ].join("");
+    /* v2.1：谷歌地图直达链接（移动端可唤起 Google 地图 App） */
+    const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || (a.name + " " + DATA.city));
+    aEl.innerHTML = `
+      <div class="left">
+        <div class="a-head">
+          <h2>${a.name}</h2><span class="en">${a.nameEn||""}</span>
+          <button type="button" class="visit-toggle ${visitClass}" onclick="cycleVisit('${a.id}')">
+            <span class="vt-ico">${visitIco}</span><span class="vt-txt">${visitTxt}</span>
+          </button>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${a.tag||""}</span>
+          <a class="gmap-head gmap-tag" target="_blank" rel="noopener" href="${gmapUrl}">📍 谷歌地图</a>
+        </div>
+        <p class="a-intro">${a.intro||""}</p>${phNote}
+        <div class="facts">
+          <div class="fact"><h4>开放时间</h4><p>${a.hours||"—"}</p></div>
+          <div class="fact"><h4>票价</h4><p>${a.price||"—"}</p></div>
+          ${extraFacts}
+        </div>
+        <div class="gallery">${imgs}</div>
+      </div>
+      <aside class="right">
+        <div class="mapcard">
+          <iframe class="map-frame" loading="lazy" title="Google 地图"
+            src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+          <div class="reviewcol">
+            <div class="review-card">
+              <div class="rc-title">评价</div>
+              <div>${scoreHtml}</div>
+              <div class="meta">${a.reviews? a.reviews.toLocaleString()+" 条评价":""}</div>
+              <div class="src">来源：${a.ratingSource||"第三方聚合"}</div>
+              ${reviewItems? `<ul class="review-list">${reviewItems}</ul>`:""}
+              <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+            </div>
+          </div>
+        </div>
+      </aside>`;
+    list.appendChild(aEl);
+
+    // 顶部标签栏 chip（蓝色=已选）；点击跳转：移动端横向滑动到对应卡片，桌面端平滑滚动到锚点
+    const chip = document.createElement("a");
+    chip.href = "#" + aEl.id;
+    chip.dataset.id = a.id;
+    chip.dataset.idx = i;
+    chip.textContent = a.name;
+    chip.className = v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none";
+    chip.addEventListener("click", function(e){
+      e.preventDefault();
+      navigateToCard(aEl.id, i);
+    });
+    toc.appendChild(chip);
+  });
+  writeSel();
+  setNavHeight(); // chip 已生成，此刻测量标签栏真实高度并写入 --nav-h
+}
+
+/* 沿途备注卡（取车/停车/超市/住宿/起点/还车等），不入标签栏 chip */
+function renderNote(a){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const ICONS = {取车:"🚗", 停车:"🅿️", 超市:"🛒", 住宿:"🏨", 起点:"📍", 还车:"🔑", 景点:"📌", 轮渡:"⛴️"};
+  const icon = ICONS[a.noteType] || "📝";
+  const el = document.createElement("div");
+  el.className = "note-card";
+  el.innerHTML = `<div class="ni">${icon}</div><div class="nt">${a.text||""}</div>`;
+  list.appendChild(el);
+}
+
+/* 首页总览：把每天的日卡渲染为卡片网格（仿景点搜罗首页的城市卡片） */
+const DAY_PALETTE = ["#2f6df0","#e14b4b","#f59e0b","#10b981","#06b6d4","#8b5cf6",
+                     "#f97316","#ec4899","#0ea5e9","#64748b","#14a44d","#9333ea"];
+function renderHome(){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const days = DATA._days || [];
+  list.className = "wrap"; // 去掉 deck（首页纵向滚动，不横向滑卡）
+  list.innerHTML = "";
+  if(days.length){
+    const h = document.createElement("h2");
+    h.className = "day-sec-t";
+    h.innerHTML = `每日行程 <span class="ct">${days.length}</span>`;
+    list.appendChild(h);
+  }
+  const grid = document.createElement("div");
+  grid.className = "day-grid";
+  days.forEach((d,idx)=>{
+    const color = DAY_PALETTE[idx % DAY_PALETTE.length];
+    const dn = (d.n!=null? d.n : (d.file||"").replace(/\D/g,"")) || (idx+1);
+    const chain = (d.cities||[]).map(c=>`<span>${c}</span>`).join('<span class="arr">➡️</span>');
+    const prev = (d.preview||[]).join("、");
+    const el = document.createElement("a");
+    el.className = "day-card";
+    el.href = d.file || "#";
+    el.innerHTML =
+      `<div class="dc-logo" style="background:${color}">D${dn}</div>` +
+      `<div class="dc-body">` +
+        `<div class="dc-day">${d.label||("第"+dn+"天")}</div>` +
+        `<div class="dc-date">${d.date||""} ${d.weekday||""}</div>` +
+        `<div class="dc-chain">${chain}</div>` +
+        `<div class="dc-hotel">🏨 ${d.hotel||"—"}</div>` +
+        (prev? `<div class="dc-prev">${prev}</div>` : "") +
+      `</div>`;
+    grid.appendChild(el);
+  });
+  list.appendChild(grid);
+}
+
+/* 返回顶部浮钮：滚动超过一屏时显示，点击平滑回顶（单次绑定） */
+function bindTotop(){
+  var b = document.getElementById("toTop");
+  if(!b || b.dataset.bound) return;
+  b.dataset.bound = "1";
+  window.addEventListener("scroll", function(){
+    if(window.scrollY > 320) b.classList.add("show"); else b.classList.remove("show");
+  }, {passive:true});
+  b.addEventListener("click", function(){ window.scrollTo({top:0, behavior:"smooth"}); });
+}
+
+/* 测量顶部标签栏真实高度（chip 换行会变高），写入 --nav-h，供锚点偏移与右栏吸顶对齐使用 */
+function setNavHeight(){
+  const nav = document.querySelector("nav.toc");
+  if(nav) document.documentElement.style.setProperty("--nav-h", nav.offsetHeight + "px");
+}
+
+/* 复制所选清单按钮已移除：标签栏只保留选择状态 chip（蓝色=已选、灰色=未选），选择状态经卡片 data-selected / #taf-selection JSON 对外可读（文件即唯一真相，不依赖 localStorage）。 */
+
+/* 移动端横向滑动卡片：滑动到某景点时，自动高亮并把对应标签栏 chip 滚动居中 */
+function centerChip(idx){
+  const deck = document.getElementById("list");
+  if(!deck || deck.scrollWidth <= deck.clientWidth + 4) return; // 仅横向滑动（移动端）生效
+  const chipsEl = document.getElementById("chips");
+  if(!chipsEl) return;
+  const chip = chipsEl.querySelector('a[data-idx="'+idx+'"]');
+  if(!chip) return;
+  chipsEl.querySelectorAll('a').forEach(c=>c.classList.remove("active-chip"));
+  chip.classList.add("active-chip");
+  const target = chip.offsetLeft - (chipsEl.clientWidth - chip.offsetWidth) / 2;
+  chipsEl.scrollTo({left: Math.max(0, target), behavior:"smooth"});
+}
+function bindDeckScroll(){
+  const deck = document.getElementById("list");
+  if(!deck) return;
+  deck.addEventListener("scroll", ()=>{
+    if(deck.scrollWidth <= deck.clientWidth + 4) return;
+    const idx = Math.round(deck.scrollLeft / deck.clientWidth);
+    centerChip(idx);
+  }, {passive:true});
+}
+
+/* 桌面端：让右栏地图与评价卡分别和左栏内容上下对齐
+   - 地图高度 = 从标题顶部到「实用贴士」卡片底部的高度
+   - 评价卡高度 = 图片画廊高度（若内容超出则内部滚动） */
+function alignDesktopCards(){
+  const deck = document.getElementById("list");
+  if(deck && deck.scrollWidth > deck.clientWidth + 4) return; // 手机端不执行
+  document.querySelectorAll(".attraction").forEach(function(card){
+    const aHead = card.querySelector(".a-head");
+    const facts = card.querySelector(".facts");
+    const gallery = card.querySelector(".gallery");
+    const mapFrame = card.querySelector(".map-frame");
+    const reviewCol = card.querySelector(".reviewcol");
+    if(!aHead || !facts || !mapFrame) return;
+    const headRect = aHead.getBoundingClientRect();
+    const factsRect = facts.getBoundingClientRect();
+    const mapH = Math.round(factsRect.bottom - headRect.top);
+    mapFrame.style.height = mapH + "px";
+    mapFrame.style.minHeight = mapH + "px";
+    mapFrame.style.flex = "0 0 auto"; /* 防止 flex-grow 把地图撑高过设置值 */
+    if(gallery && reviewCol){
+      const galleryH = Math.round(gallery.getBoundingClientRect().height);
+      reviewCol.style.height = galleryH + "px";
+      reviewCol.style.minHeight = galleryH + "px";
+      reviewCol.style.overflowY = "auto";
+    }
+  });
+}
+/* 监听图片懒加载完成，图片加载导致画廊高度变化后重新对齐 */
+function observeGalleryImages(){
+  document.querySelectorAll(".gallery img").forEach(function(img){
+    if(img.complete) return;
+    img.addEventListener("load", function(){ alignDesktopCards(); }, {once:true});
+  });
+}
+
+function openLb(src){document.getElementById("lbImg").src=src;document.getElementById("lightbox").classList.add("open");}
+function closeLb(){document.getElementById("lightbox").classList.remove("open");}
+document.getElementById("lightbox").addEventListener("click",e=>{if(e.target.id==="lightbox")closeLb();});
+render();
+setNavHeight();
+bindDeckScroll();
+centerChip(0);
+alignDesktopCards();
+window.addEventListener("load", ()=>{ setNavHeight(); centerChip(0); alignDesktopCards(); observeGalleryImages(); });
+window.addEventListener("resize", ()=>{ setNavHeight(); alignDesktopCards(); });
+</script>
+</body>
+</html>

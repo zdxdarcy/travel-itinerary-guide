@@ -1,0 +1,1589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>景点导览</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2733; --muted:#6b7686;
+    --line:#e6e9ef; --accent:#2f6df0; --accent-soft:#eaf1ff; --accent-light:#cfe0ff; --star:#f5a623;
+    --shadow:0 6px 24px rgba(20,40,80,.08);
+    --nav-h:56px; /* 顶部标签栏高度：运行时由 JS 测量真实高度后覆盖，用于锚点偏移与右栏吸顶 */
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.65;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent);text-decoration:none}
+  html{scroll-behavior:smooth} /* 点击标签栏 chip 平滑跳转，并配合 scroll-margin-top 不被吸顶标签栏遮挡 */
+  .wrap{max-width:1240px;margin:0 auto;padding:0 20px}
+
+  /* Header */
+  header.hero{background:linear-gradient(135deg,#2f6df0,#6aa0ff);color:#fff;padding:40px 0}
+  .hero-body{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+  .hero-text{flex:1;min-width:280px}
+  .flag{font-size:42px;line-height:1}
+  .hero h1{margin:12px 0 4px;font-size:34px;font-weight:800;letter-spacing:.5px}
+  .hero .region{opacity:.92;font-size:15px}
+  .hero p.intro{margin:16px 0 0;max-width:640px;font-size:15.5px;opacity:.96}
+  .hero-map{width:340px;flex:0 0 340px;height:230px;border-radius:16px;overflow:hidden;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.4)}
+  .hero-map iframe{width:100%;height:100%;border:0;filter:brightness(.95)}
+
+  /* 顶部标签栏：各景点选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）+ 右侧「保存」按钮 */
+  nav.toc{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  nav.toc .wrap{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding-top:10px;padding-bottom:10px}
+  /* 标签栏只保留选择状态 chip（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）；计数与复制按钮已移除 */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;flex:1;align-items:flex-start}
+  nav.toc a{font-size:13px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;
+    color:var(--muted);background:#fff;white-space:nowrap;transition:all .15s;flex:0 0 auto}
+  /* 三态配色：入内参观=蓝色、外部参观=淡蓝色、未选=灰色 */
+  nav.toc a.chip-inside{background:var(--accent);color:#fff;border-color:var(--accent)}
+  nav.toc a.chip-outside{background:var(--accent-light);color:var(--accent);border-color:#bcd4ff}
+  nav.toc a.chip-none{background:#fff;color:var(--muted);border-color:var(--line);opacity:.6}
+  nav.toc a:hover{border-color:var(--accent)}
+  nav.toc a.active-chip{outline:2px solid var(--accent);outline-offset:1px}
+  /* 「保存更改」按钮：已保存=绿色，切换选取后变橙色警示（未保存），点击保存后恢复绿色 */
+  .save-btn{margin-left:auto;flex:0 0 auto;font-size:13px;font-weight:700;color:#fff;background:#2f9e44;
+    border:1px solid #2f9e44;border-radius:999px;padding:7px 16px;cursor:pointer;white-space:nowrap;transition:all .15s}
+  .save-btn:hover{background:#2b8a3e;border-color:#2b8a3e}
+  .save-btn.dirty{background:#e8590c;border-color:#e8590c;box-shadow:0 0 0 3px rgba(232,89,12,.18)}
+  .save-btn.dirty:hover{background:#d9480f;border-color:#d9480f}
+  /* 手机端：标签栏单排横向滚动；当前景点对应 chip 自动居中；「保存」按钮在右、简短 */
+  @media (max-width:760px){
+    nav.toc .wrap{flex-wrap:nowrap;align-items:center;gap:8px}
+    .save-btn{order:0;margin-left:auto;align-self:center;flex:0 0 auto;padding:6px 14px;font-size:13px}
+    .chips{flex:1 1 auto;max-width:none;max-height:none;overflow-x:auto;overflow-y:hidden;
+      flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:center;scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch}
+    nav.toc a{flex:0 0 auto}
+  }
+  @media (max-width:560px){ .save-btn{padding:6px 10px;font-size:12px} }
+
+  /* Attraction：电脑端两栏（左文右图），移动端单卡横向滑动（.deck）。
+     v2.1：移动端以横向滑动卡片（.deck）逐张切换；电脑端保持 v2.0 两栏 + 右栏地图。 */
+  .deck{ } /* 桌面端：普通竖向流；移动端在媒体查询中改为横向滑动容器 */
+  .attraction{display:flex;gap:28px;padding:40px 0;border-bottom:1px solid var(--line);
+    scroll-margin-top:calc(var(--nav-h) + 16px)}
+  .left{flex:1;min-width:0}
+  .right{width:540px;flex:0 0 540px;position:sticky;top:var(--nav-h);display:flex;flex-direction:column}
+  .a-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0;scroll-margin-top:calc(var(--nav-h) + 12px)}
+  .a-head h2{margin:0;font-size:24px;font-weight:800}
+  .a-head .en{color:var(--muted);font-size:14px}
+  /* 三态参观选择：入内参观(✓) / 外部参观(○) / 不参观(○灰)。
+     点击在三种状态间循环切换，文字随状态变化，桌面与手机端一致。 */
+  .visit-toggle{display:inline-flex;align-items:center;gap:6px;margin-left:auto;cursor:pointer;
+    border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:14px;font-weight:600;
+    background:#fff;color:var(--muted);user-select:none;transition:all .15s;flex:0 0 auto}
+  .visit-toggle .vt-ico{font-weight:700;font-size:15px;line-height:1}
+  .visit-toggle.vt-inside{color:#fff;border-color:var(--accent);background:var(--accent)}
+  .visit-toggle.vt-outside{color:var(--accent);border-color:#bcd4ff;background:var(--accent-light)}
+  .visit-toggle.vt-none{color:var(--muted);border-color:var(--line);background:#fff}
+  .visit-toggle:active{transform:scale(.96)}
+  /* 谷歌地图直达链接：电脑端在标题行右侧（.gmap-title），移动端与分类标签同行居右（.gmap-tag） */
+  .tag-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 6px}
+  .tag{display:inline-block;padding:4px 12px;background:var(--accent-soft);color:var(--accent);
+    border-radius:999px;font-size:13px;font-weight:600}
+  .gmap-head{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;
+    color:var(--accent);background:var(--accent-soft);border:1px solid #cfe0ff;border-radius:999px;padding:5px 12px;
+    white-space:nowrap;transition:transform .12s, background .15s}
+  .gmap-head:active{transform:scale(.96);background:#dbe8ff}
+  .gmap-tag{display:none}
+
+  .a-intro{font-size:15.5px;color:#33404f;margin:0 0 20px;line-height:1.85}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px}
+  .fact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+  .fact h4{margin:0 0 6px;font-size:12.5px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;font-weight:700}
+  .fact p{margin:0;font-size:14.5px;color:var(--ink);line-height:1.6}
+  .gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:22px}
+  .gallery img{width:100%;height:190px;object-fit:cover;border-radius:12px;border:1px solid var(--line);
+    cursor:pointer;transition:transform .15s ease, box-shadow .15s ease;background:#eef1f5}
+  .gallery img:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+
+  /* 右栏：地图在上、评价在下（桌面端右栏与左栏等高，地图用 JS 计算高度填满「标题→信息卡底部」的高度，
+     评价卡用 JS 对齐图片画廊高度；内部保持 22px 间隙与左栏 facts→gallery 间隙一致） */
+  .mapcard{display:flex;flex-direction:column;gap:22px;align-items:stretch;flex:1 1 auto;min-height:0}
+  .map-frame{width:100%;flex:1 1 auto;min-height:340px;border:0;border-radius:14px;box-shadow:var(--shadow);display:block}
+  .reviewcol{width:100%;display:block;flex:0 0 auto}
+  .review-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;
+    box-shadow:var(--shadow);width:100%;display:flex;flex-direction:column;justify-content:flex-start}
+  .review-card .rc-title{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+  .review-card .stars{font-size:22px;letter-spacing:2px;color:var(--star);line-height:1}
+  .review-card .score{font-weight:800;font-size:18px;margin-left:6px;color:var(--ink)}
+  .review-card .meta{font-size:13px;color:var(--muted);margin-top:6px}
+  .review-card .src{font-size:12px;color:var(--muted);margin-top:2px}
+  .review-card .gmap-link{display:inline-block;margin-top:10px;font-size:13px;font-weight:600}
+  .review-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+  .review-item{font-size:13px;color:#33404f;line-height:1.5;padding:8px 10px;background:#f8f9fb;border-radius:10px;
+    border-left:3px solid var(--accent);display:flex;gap:8px;align-items:flex-start}
+  .review-item .rtext{flex:1;min-width:0}
+  .review-item .rbadge{flex:0 0 auto;font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap;margin-top:1px}
+  .rb-good{background:#e7f6ec;color:#1f9d4d;border:1px solid #bfe6cc}
+  .rb-neutral{background:#fff4e0;color:#b9791b;border:1px solid #f0d49a}
+  .rb-bad{background:#fdeaea;color:#cf3b3b;border:1px solid #f3c2c2}
+  .rt-good{border-left-color:#1f9d4d}
+  .rt-neutral{border-left-color:#b9791b}
+  .rt-bad{border-left-color:#cf3b3b}
+
+  footer{padding:34px 0 60px;color:var(--muted);font-size:13px;text-align:center;line-height:1.8}
+
+  /* 复制提示 toast */
+  .toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(20px);
+    background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-size:14px;font-weight:600;
+    opacity:0;pointer-events:none;transition:all .25s;z-index:200}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .lb{position:fixed;inset:0;background:rgba(10,18,30,.86);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .lb.open{display:flex}
+  .lb img{max-width:92vw;max-height:88vh;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .lb .close{position:absolute;top:18px;right:24px;color:#fff;font-size:34px;cursor:pointer;line-height:1}
+
+  /* 平板及以下：两栏收起为单栏（左文 + 右图上下堆叠） */
+  @media (max-width:1000px){
+    .attraction{flex-direction:column;gap:18px}
+    .right{width:100%;flex:none;position:static}
+    .facts{grid-template-columns:1fr}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+  /* 手机端：横向滑动卡片切换景点（每张占满屏宽，卡内纵向滚动）；谷歌地图改与分类标签同行 */
+  @media (max-width:760px){
+    .wrap{padding:0 20px} /* 保持与标签栏一致的左右留空 */
+    #list.deck, .deck{padding:0;display:flex;flex-direction:row;gap:0;overflow-x:auto;scroll-snap-type:x mandatory;
+      -webkit-overflow-scrolling:touch}
+    .attraction{flex:0 0 100%;width:100%;min-width:0;scroll-snap-align:start;border-bottom:none;
+      min-height:calc(100vh - var(--nav-h));min-height:calc(100dvh - var(--nav-h));
+      overflow-y:auto;padding:22px 20px;gap:0;background:var(--card);border-right:1px solid var(--line)}
+    /* 手机端：左栏改为纵向 flex，用 order 把「图片」提到「开放时间/票价/时长/贴士」之前
+       （电脑端 DOM 顺序仍是 信息→图片，故桌面端保持 v2.0 格式，仅手机端重排） */
+    .left{flex:none;display:flex;flex-direction:column}
+    .gallery{grid-template-columns:1fr 1fr;order:4}
+    .facts{margin-bottom:22px;order:5} /* 手机端：实用贴士与评价卡之间恢复与其它一致的 22px 间隙 */
+    .mapcard{flex:none;height:auto;gap:22px} /* 手机端：评价卡与地图卡之间保留与其它卡片一致的空隙 */
+    .map-frame{height:300px;min-height:0;order:2;margin-top:0}
+    .reviewcol{order:1;margin-bottom:0}
+    .right{display:block} /* 手机端：右栏不再等高拉伸，恢复普通块流 */
+    .gmap-tag{display:inline-flex}
+  }
+  @media (max-width:560px){
+    .hero-map{width:100%;flex:none}
+    .a-head h2{font-size:21px}
+    .gallery{grid-template-columns:1fr 1fr}
+  }
+
+  /* ===== 行程导览扩展样式 ===== */
+  /* 日程导航栏（替代城市导航栏）：D1..D12 跳转各天页 + 总览。
+     不固定（position:static），避免遮挡下方的景点标签栏；手机端亦不固定。 */
+  nav.daytabs{position:static;z-index:1;background:linear-gradient(135deg,#2f6df0,#6aa0ff);
+    border-bottom:1px solid rgba(255,255,255,.25)}
+  nav.daytabs .wrap{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 20px}
+  nav.daytabs a{font-size:12.5px;padding:5px 11px;border:1px solid rgba(255,255,255,.45);border-radius:999px;
+    color:#fff;background:rgba(255,255,255,.14);white-space:nowrap;transition:all .15s}
+  nav.daytabs a:hover{border-color:#fff;background:rgba(255,255,255,.28)}
+  nav.daytabs a.active{background:#fff;color:var(--accent);border-color:#fff;font-weight:700}
+  nav.daytabs a.home{background:rgba(255,255,255,.22);border-color:rgba(255,255,255,.55)}
+  nav.daytabs a.home:hover{background:rgba(255,255,255,.36)}
+  nav.daytabs .dt-sep{width:1px;height:18px;background:rgba(255,255,255,.35);margin:0 2px}
+  /* 沿途备注卡（取车/停车/超市/住宿/起点等） */
+  .note-card{display:flex;gap:12px;align-items:flex-start;padding:13px 18px;margin:10px 0;
+    border:1px dashed #c9d4e6;background:#f7faff;border-radius:12px}
+  .note-card .ni{font-size:18px;line-height:1.2;flex:0 0 auto}
+  .note-card .nt{font-size:14.5px;color:#33404f}
+  .note-card .nt b{color:var(--accent)}
+  /* 缺失景点占位卡 */
+  .attraction.placeholder .a-intro{color:var(--muted);font-style:italic}
+  .ph-note{display:inline-block;margin-top:10px;font-size:12.5px;color:#b9791b;
+    background:#fff4e0;border:1px solid #f0d49a;border-radius:999px;padding:3px 10px}
+  /* 物流简化卡（停车/取车） */
+  .attraction.logistics .a-head h2{font-size:22px}
+  .attraction.logistics .right .mapcard{gap:0}
+  .attraction.logistics .right .map-frame{min-height:260px}
+  @media (max-width:1000px){
+    .attraction.logistics{flex-direction:column}
+    .attraction.logistics .right{width:100%;flex:none}
+  }
+  @media (max-width:760px){
+    .attraction.logistics .right .map-frame{height:240px;min-height:0}
+  }
+  /* ===== 首页总览（仿景点搜罗首页：卡片网格） ===== */
+  /* 首页隐藏单日 hero 地图（总览不需要定位地图），hero 改为纵向左对齐 */
+  body.home .hero{padding:34px 0 26px}
+  body.home .hero-map{display:none}
+  body.home .hero-body{flex-direction:column;align-items:flex-start;gap:6px}
+  body.home .hero h1{font-size:30px}
+  body.home p.intro{opacity:.96}
+  /* 返回顶部浮钮（与景点搜罗首页一致） */
+  .totop{position:fixed;right:20px;bottom:20px;width:46px;height:46px;border-radius:50%;border:none;
+    background:var(--accent);color:#fff;cursor:pointer;z-index:600;opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .15s,background .15s;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    box-shadow:0 8px 22px rgba(20,40,80,.30)}
+  .totop .arw{font-size:18px;line-height:1;margin-top:2px}
+  .totop .lbl{font-size:10px;line-height:1;margin-top:1px}
+  .totop.show{opacity:1;pointer-events:auto}
+  .totop:hover{transform:translateY(-2px);background:#1f5ad6}
+  /* 首页区块标题（仿景点搜罗「全部城市」） */
+  .day-sec-t{font-size:20px;margin:24px 0 16px;display:flex;align-items:center;gap:10px}
+  .day-sec-t .ct{font-size:13px;font-weight:700;color:#fff;background:var(--accent);border-radius:999px;padding:2px 12px}
+  /* 日程卡片网格 */
+  .day-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .day-card{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:16px 18px;box-shadow:0 6px 24px rgba(20,40,80,.06);transition:transform .15s,box-shadow .15s,border-color .15s;
+    text-decoration:none;color:inherit}
+  .day-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(20,40,80,.12);border-color:var(--accent)}
+  .dc-logo{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+    font-size:17px;font-weight:800;color:#fff;flex:0 0 auto;box-shadow:0 6px 16px rgba(0,0,0,.14);line-height:1.1;text-align:center}
+  .dc-body{flex:1;min-width:0}
+  .dc-day{font-size:17px;font-weight:800;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-date{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .dc-chain{margin-top:7px;font-weight:700;color:var(--accent);font-size:14.5px;line-height:1.45}
+  .dc-chain .arr{color:var(--accent);margin:0 4px;font-weight:400}
+  .dc-hotel{font-size:12.5px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-prev{font-size:12.5px;color:#46566a;margin-top:6px;line-height:1.6;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  /* 首页主体留白（hero 与卡片网格之间） */
+  body.home #list{padding-top:6px;padding-bottom:30px}
+  /* 手机端：日程网格单列、hero 字号收敛，保证可读性 */
+  @media (max-width:620px){
+    .day-grid{grid-template-columns:1fr}
+    .day-sec-t{font-size:18px;margin:18px 0 14px}
+    .dc-logo{width:48px;height:48px;font-size:15px}
+    .dc-day{font-size:16px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="daytabs"><div class="wrap"><a href="index.html" class="home">总览</a><span class="dt-sep"></span><a href="D01.html">D1</a><a href="D02.html">D2</a><a href="D03.html">D3</a><a href="D04.html">D4</a><a href="D05.html">D5</a><a href="D06.html">D6</a><a href="D07.html">D7</a><a href="D08.html">D8</a><a href="D09.html">D9</a><a href="D10.html">D10</a><a href="D11.html">D11</a><a href="D12.html" class="active">D12</a></div></nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-body">
+      <div class="hero-text">
+        <div class="flag" id="flag">📍</div>
+        <h1 id="cityTitle">加载中…</h1>
+        <div class="region" id="region"></div>
+        <p class="intro" id="cityIntro"></p>
+      </div>
+      <div class="hero-map">
+        <iframe id="cityMap" loading="lazy" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- 顶部标签栏：各景点选择状态 chip（蓝色=已选、灰色=未选），点击跳转；右侧为「保存更改」按钮 -->
+<nav class="toc"><div class="wrap">
+  <div class="chips" id="chips"></div>
+  <button id="saveBtn" class="save-btn" type="button" onclick="saveSelection()">保存</button>
+</div></nav>
+
+<main class="wrap deck" id="list"></main>
+
+<footer>
+  本页由「国家 + 城市 → 景点导览」工作流程生成 · 地图为 Google Maps 嵌入<br>
+  每个景点展示 6 张来自 Wikimedia Commons 的真实照片（非 AI 生成）；评分与评论为基于游客反馈整理的代表性摘要<br>
+  点击景点标题右侧的「入内参观 / 外部参观」可在三种状态间切换来规划行程（入内参观 ✓ / 外部参观 ○ / 不参观）；状态同步到顶部标签栏（入内参观=蓝色，外部参观=淡蓝色，未选=灰色）；切换后点标签栏右侧「保存」把选择存入本机浏览器（localStorage），下次打开自动恢复（仅本浏览器/设备生效）。
+</footer>
+
+<!-- 机器可读的选择状态：其它 skill 渲染本页后可直接读取此 JSON -->
+<script type="application/json" id="taf-selection">{}</script>
+
+<div class="lb" id="lightbox"><span class="close" onclick="closeLb()">×</span><img id="lbImg" src="" alt=""></div>
+<div class="toast" id="toast"></div>
+<button class="totop" id="toTop" title="返回顶部" aria-label="返回顶部"><span class="arw">↑</span><span class="lbl">顶部</span></button>
+
+<script>
+/* =========================================================================
+   可复用数据块 —— 新建一座城市时，只需替换下面这个 DATA 对象。
+   城市规模对应景点数：小城市 15 个 / 中城市 20 个 / 大城市 30 个（可含「周边」景点，兼顾网红打卡地）。「周边」指驾车 1 小时以内可达的邻近城镇/景点；超过 1 小时车程的远途（如霍亨索伦城堡）不计入。
+   字段说明：
+     flag          国旗 emoji，如 🇩🇪 🇫🇷 🇯🇵 🇺🇸
+     country       国家（中文）
+     countryEn     国家英文名（用于页头地图，更稳定）
+     city          城市（中文）
+     cityEn        城市英文名（用于页头地图，更稳定）
+     region        地区/州省（可选）
+     intro         城市一句话简介
+     mapZoom       城市在国家中位置地图的缩放级别（默认 5，大国如美国用 4）
+     attractions[] 景点数组，每个景点：
+       id          英文锚点 id（用于目录跳转，保持唯一）
+       name        中文名
+       nameEn      英文名
+       tag         一句话标签
+       selected    是否「准备参观」——布尔值（兼容旧数据）；v2.1 起推荐用 visit 字段表达三态：visit:"inside" 入内参观 / "outside" 外部参观 / 缺省或 null 不参观。渲染与存档均兼容旧布尔 selected（true→inside，false→不参观）
+       rating      评分 0–5（数字），查不到填 null
+       reviews     评价数量（数字），查不到填 null
+       ratingSource 评分来源（如 Tripadvisor / Google）
+       mapQuery    地图检索词（地点名或地址，用于右侧 Google 地图）
+       intro       文字介绍，约 200 个汉字：涵盖历史由来、核心看点、游览体验与适合人群，避免一句话带过
+       hours       开放时间（写具体）：每周各日时段、闭馆日、最晚入场、特殊日期（如圣诞节/跨年）调整
+       price       票价（分档列出）：成人 / 优惠(学生·老人·残障) / 儿童 / 家庭票，注明免费人群与本地卡折扣
+       duration    建议游览时长，如 "约 2–3 小时"（可选）
+       tips         实用贴士，如最佳时段、交通、是否需预约（可选）
+       photos      6 张真实照片 URL 数组（来自 Wikimedia Commons，浏览器直接加载，无需下载；缺图景点可用其它同城真实照片补足）
+       reviewList  5 条代表性游客评论，须为对象数组：{t:"评论文字", type:"good"|"neutral"|"bad"}；每景点固定为 2 条好评 + 1 条中评 + 2 条差评
+   照片说明：本工作流不使用 AI 生成图，而是从网络取真实照片。
+选择状态说明：v2.1 起为三态——visit:"inside" 入内参观 / "outside" 外部参观 / 缺省(或 null) 不参观（兼容旧布尔 selected：true→inside，false→不参观）；
+  用户点击标题右侧按钮在三种状态间循环切换；状态会同步到顶部标签栏（入内参观=蓝色、外部参观=淡蓝色、未选=灰色）、写入卡片 data-visit / data-selected 属性、写入 #taf-selection JSON，便于其它 skill 读取；标签栏只保留选择状态 chip，不再显示计数与复制按钮。
+  选取状态默认以 DATA.visit（或兼容的 DATA.selected）为准；点击「保存」后写入本机浏览器 localStorage（按城市隔离，存为 {states:{id:visit}}），下次打开自动恢复——仅本浏览器/设备生效，不写入文件。
+   ========================================================================= */
+const DATA = {
+  "flag": "🇩🇪",
+  "country": "德国",
+  "countryEn": "Germany",
+  "city": "第12天",
+  "cityEn": "",
+  "region": "2026-10-11 周日",
+  "intro": "",
+  "mapZoom": 5,
+  "_storeKey": "taf-itin-D12",
+  "_dayNum": 12,
+  "_allCities": [
+    {
+      "cn": "巴哈拉赫",
+      "en": "Bacharach"
+    },
+    {
+      "cn": "法兰克福",
+      "en": "Frankfurt am Main"
+    }
+  ],
+  "_date": "2026-10-11",
+  "_weekday": "周日",
+  "attractions": [
+    {
+      "id": "ruine-burg-fuerstenberg",
+      "name": "菲尔斯滕贝格城堡遗址 (Burg Fürstenberg)",
+      "nameEn": "Ruine Burg Fürstenberg",
+      "tag": "莱茵畔静谧中世纪废墟 · 观景台",
+      "selected": true,
+      "rating": 4.3,
+      "reviews": 400,
+      "ratingSource": "Google",
+      "mapQuery": "Ruine Burg Fürstenberg, Rheinland-Pfalz",
+      "intro": "菲尔斯滕贝格城堡遗址（Ruine Burg Fürstenberg）坐落于莱茵河西岸、宾根附近的葡萄园山丘之上，是莱茵中游河谷一处静谧的中世纪废墟。城堡最早见于 13 世纪，曾扼守莱茵航运要冲，如今仅存残墙、塔基与拱门，却正好成为眺望河景与对岸鼠堡的天然观景台。遗址免费开放、人迹罕至，适合喜欢小众古迹与徒步的旅人顺路探访，是吕德斯海姆—宾根葡萄酒之路上的隐秘一站。",
+      "hours": "遗址区域全天免费开放（无围栏、无售票），可自由进入；建议白天前往。",
+      "price": "免费。",
+      "duration": "约 20–40 分钟",
+      "tips": "从吕德斯海姆或宾根乘船/驾车至山脚后需步行爬一段葡萄园小径，穿防滑鞋；遗址无厕所与商店，自带饮水。登残墙远眺莱茵与鼠堡是最大亮点。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Burgruine_F%C3%BCrstenberg.jpg/960px-Burgruine_F%C3%BCrstenberg.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/26/Ruine_F%C3%BCrstenberg.jpg/960px-Ruine_F%C3%BCrstenberg.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "完全免费的废墟，安安静静没人挤，登上去看莱茵河和鼠堡特别开阔。",
+          "type": "good"
+        },
+        {
+          "t": "喜欢这种原生态古迹，残墙和拱门很有岁月感，拍照也出片。",
+          "type": "good"
+        },
+        {
+          "t": "就剩断壁残垣，可看内容不多；对纯遗迹不感兴趣的人可能觉得空。",
+          "type": "neutral"
+        },
+        {
+          "t": "上山小路标识少，导航容易导到死路；夏天太阳直晒没遮阴。",
+          "type": "bad"
+        },
+        {
+          "t": "没有任何设施，厕所商店都没有，带娃或不便行走者要权衡。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-12-1",
+      "name": "P9 - Rheinstraße / Niederstraße",
+      "nameEn": "",
+      "tag": "物流 · 停车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "停车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "P9 - Rheinstraße / Niederstraße"
+    },
+    {
+      "name": "吕德斯海姆",
+      "nameEn": "Rüdesheim am Rhein",
+      "tag": "莱茵河谷 · 葡萄酒小镇",
+      "selected": true,
+      "intro": "吕德斯海姆是莱茵河中上游河谷世界遗产区内最富盛名的葡萄酒小镇，距法兰克福约一小时车程，是热门的一日游目的地。小镇依山傍水，背靠层层叠叠的雷司令葡萄园，最著名的当属狭窄热闹的「画眉巷」——短短几十米的鹅卵石小巷两侧挤满了传统酒馆与音乐酒吧，夜晚灯火通明、乐声不断，洋溢着欢快的莱茵葡萄酒风情。乘坐缆车登上山顶的尼德瓦德纪念碑，可俯瞰蜿蜒的莱茵河与铺满山坡的葡萄园全景，视野极佳。游客还可搭乘莱茵河游船，饱览沿岸古堡与罗蕾莱岩的浪漫风光。品一杯当地雷司令、漫步葡萄园、乘船赏河谷，是这里不容错过的经典体验。",
+      "hours": "小镇全天开放（缆车及各店铺营业时间不一）",
+      "price": "免费（小镇）；缆车约 €10 往返",
+      "duration": "约 4–6 小时",
+      "tips": "推荐乘缆车上尼德瓦德纪念碑俯瞰河谷；画眉巷夜晚最热闹，可安排搭配莱茵河游船一并游览",
+      "mapQuery": "Drosselgasse, Rüdesheim am Rhein",
+      "rating": 4.6,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "缆车上山俯瞰整片葡萄园和莱茵河，风景美到窒息，太值了。",
+          "type": "good"
+        },
+        {
+          "t": "画眉巷晚上超热闹，坐在酒馆里听着音乐喝雷司令特别有气氛。",
+          "type": "good"
+        },
+        {
+          "t": "很典型的旅游小镇，适合悠闲逛半天，商业化程度也比较高。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季游客太多，画眉巷挤得水泄不通，酒馆价格也偏贵。",
+          "type": "bad"
+        },
+        {
+          "t": "淡季或阴雨天很多店铺不开门，小镇会显得冷清许多。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Panoramic_View_of_R%C3%BCdesheim_am_Rhein_20140928_1.jpg/960px-Panoramic_View_of_R%C3%BCdesheim_am_Rhein_20140928_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Bergstra%C3%9Fe_%28R%C3%BCdesheim_am_Rhein%29.jpg/960px-Bergstra%C3%9Fe_%28R%C3%BCdesheim_am_Rhein%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/R%C3%BCdesheim_am_Rhein_from_Rhine.jpg/960px-R%C3%BCdesheim_am_Rhein_from_Rhine.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Niederwalddenkmal%2C_R%C3%BCdesheim_am_Rhein%2C_140726%2C_ako.jpg/960px-Niederwalddenkmal%2C_R%C3%BCdesheim_am_Rhein%2C_140726%2C_ako.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/Weingarten_in_der_Br%C3%B6mserburg%2C_R%C3%BCdesheim_am_Rhein.jpg/960px-Weingarten_in_der_Br%C3%B6mserburg%2C_R%C3%BCdesheim_am_Rhein.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/60/R%C3%BCdesheim_am_Rhein_-_54966700556.jpg/960px-R%C3%BCdesheim_am_Rhein_-_54966700556.jpg"
+      ],
+      "id": "ruedesheim",
+      "visit": "inside"
+    },
+    {
+      "id": "drosselgasse-ruedesheim",
+      "name": "夜莺巷 (Drosselgasse)",
+      "nameEn": "Drosselgasse",
+      "tag": "莱茵葡萄酒文化活招牌",
+      "selected": true,
+      "rating": 4.4,
+      "reviews": 8000,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Drosselgasse, Rüdesheim am Rhein",
+      "intro": "夜莺巷（Drosselgasse）是吕德斯海姆最著名的百年葡萄酒巷，全长仅约百米，却密布着挂着藤蔓与灯笼的桁架老屋、酒馆与酒吧。白天可品雷司令、尝本地火腿，入夜后手风琴与歌声此起彼伏，是莱茵葡萄酒文化的活招牌。巷子一端连着画眉鸟列车（缆车）山脚，另一端通向西妥教堂，是整段莱茵之旅最热闹、最有人情味的一站。",
+      "hours": "巷子全天开放可步行；酒馆与店铺多 11:00–24:00，旺季更晚。",
+      "price": "免费进入巷子；品酒与餐饮消费另计。",
+      "duration": "约 30–90 分钟",
+      "tips": "想拍安静的巷子赶上午，入夜则是热闹的酒馆氛围；巷口即画眉鸟列车山脚，可顺道上山看葡萄园。旺季人多，看好随身物品。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/Drosselgasse%2C_R%C3%BCdesheim_am_Rhein%2C_Germany_2010.jpg/960px-Drosselgasse%2C_R%C3%BCdesheim_am_Rhein%2C_Germany_2010.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/Drosselgasse_Abend_R%C3%BCdesheim_am_Rhein.jpg/960px-Drosselgasse_Abend_R%C3%BCdesheim_am_Rhein.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Drosselgasse_in_R%C3%BCdesheim_am_Rhein.jpg/960px-Drosselgasse_in_R%C3%BCdesheim_am_Rhein.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Fachwerkidylle_%28Drosselgasse%2C_R%C3%BCdesheim%29.jpg/960px-Fachwerkidylle_%28Drosselgasse%2C_R%C3%BCdesheim%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Drosselgasse_Old_Town_Rudesheim_am_Rhein_Germany_%282_of_23%29_%2837676226281%29.jpg/960px-Drosselgasse_Old_Town_Rudesheim_am_Rhein_Germany_%282_of_23%29_%2837676226281%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Oriel_Drosselgasse_R%C3%BCdesheim.JPG/960px-Oriel_Drosselgasse_R%C3%BCdesheim.JPG"
+      ],
+      "reviewList": [
+        {
+          "t": "百来米的小巷子太有气氛了，酒馆一家接一家，雷司令配香肠绝了。",
+          "type": "good"
+        },
+        {
+          "t": "晚上Live音乐不断，端着酒杯站在巷子里就很开心，莱茵之旅的高光。",
+          "type": "good"
+        },
+        {
+          "t": "商业化确实重，游客多、价格略高；想安静建议上午来。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季人挤人，推婴儿车几乎寸步难行；行李多的话很狼狈。",
+          "type": "bad"
+        },
+        {
+          "t": "每家酒馆都拉客，有点吵；部分店人均消费不低。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-12-2",
+      "name": "Parkplatz Niederwalddenkmal Rüdesheim am Rhein",
+      "nameEn": "",
+      "tag": "物流 · 停车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "停车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Parkplatz Niederwalddenkmal Rüdesheim am Rhein"
+    },
+    {
+      "id": "niederwalddenkmal",
+      "name": "尼德瓦尔德纪念碑 (Niederwalddenkmal)",
+      "nameEn": "Niederwalddenkmal",
+      "tag": "1871 统一纪念 · 日耳曼妮娅雕像",
+      "selected": true,
+      "rating": 4.6,
+      "reviews": 6000,
+      "ratingSource": "Tripadvisor",
+      "mapQuery": "Niederwalddenkmal, Rüdesheim am Rhein",
+      "intro": "尼德瓦尔德纪念碑（Niederwalddenkmal）矗立在吕德斯海姆上方的尼德瓦尔德山丘，是为纪念 1871 年德意志统一而建的宏伟纪念建筑。中央 10 米高的日耳曼妮娅镀金雕像俯瞰莱茵河谷，周遭平台可饱览葡萄园与河道全景。游客多从吕德斯海姆乘齿轨缆车或画眉鸟列车上山，纪念碑与脚下葡萄园共同构成中莱茵最经典的明信片画面，也是联合国教科文组织世界遗产莱茵河谷段的标志性景观。",
+      "hours": "纪念碑平台与雕像区全天开放、免费进入；乘吕德斯海姆齿轨缆车按运营时段（通常 09:00–19:00，冬季缩短）。",
+      "price": "纪念碑免费；吕德斯海姆↔山顶齿轨缆车往返约 €10–14（可选）。",
+      "duration": "约 1–2 小时（含缆车上下）",
+      "tips": "从吕德斯海姆乘齿轨缆车直达山顶最省力，车上还能看葡萄园；登平台俯瞰莱茵大弯是经典机位。晴天上午光线最佳，建议预留排队时间（旺季缆车较忙）。",
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2020-03-04-Niederwalddenkmal-1.jpg/960px-2020-03-04-Niederwalddenkmal-1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/2020-03-04-Niederwalddenkmal-2.jpg/960px-2020-03-04-Niederwalddenkmal-2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Germania_Niederwalddenkmal.jpg/960px-Germania_Niederwalddenkmal.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/Niederwalddenkmal_Germania.jpg/960px-Niederwalddenkmal_Germania.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Niederwalddenkmal%2C_R%C3%BCdesheim_am_Rhein%2C_140726%2C_ako.jpg/960px-Niederwalddenkmal%2C_R%C3%BCdesheim_am_Rhein%2C_140726%2C_ako.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/Weinberge_und_Niederwalddenkmal_R%C3%BCdesheim_am_Rhein.jpg/960px-Weinberge_und_Niederwalddenkmal_R%C3%BCdesheim_am_Rhein.jpg"
+      ],
+      "reviewList": [
+        {
+          "t": "坐缆车上去一看，莱茵河大弯和葡萄园铺在脚下，日耳曼妮娅雕像特别壮观。",
+          "type": "good"
+        },
+        {
+          "t": "纪念碑免费又能看全景，性价比超高；和吕德斯海姆酒巷一天玩刚好。",
+          "type": "good"
+        },
+        {
+          "t": "平台风大，秋天来要穿外套；雕像内部不开放，主要看外观与视野。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季缆车排队久，带小孩老人有点累；山顶餐饮选择少且贵。",
+          "type": "bad"
+        },
+        {
+          "t": "阴天雾大时视野差，白跑一趟；出行前看天气预报更稳。",
+          "type": "bad"
+        }
+      ],
+      "visit": "inside"
+    },
+    {
+      "id": "log-12-3",
+      "name": "Hauptwache停车库 Parkhaus Hauptwache",
+      "nameEn": "",
+      "tag": "物流 · 停车",
+      "kind": "logistics",
+      "logistics": true,
+      "noteType": "停车",
+      "visit": null,
+      "selected": false,
+      "intro": "",
+      "hours": "",
+      "price": "—",
+      "duration": "",
+      "tips": "",
+      "photos": [],
+      "reviewList": [],
+      "rating": null,
+      "reviews": null,
+      "ratingSource": "",
+      "mapQuery": "Hauptwache停车库 Parkhaus Hauptwache"
+    },
+    {
+      "name": "圣保罗教堂",
+      "nameEn": "Paulskirche",
+      "tag": "德国民主摇篮 · 历史地标",
+      "selected": true,
+      "intro": "圣保罗教堂被誉为「德国民主的摇篮」。1848 年，德意志历史上第一个自由选举产生的国民议会在此召开，起草了德国首部民主宪法，教堂因而成为德国民主运动最重要的纪念地。建筑为椭圆形古典主义风格，红砂岩外墙朴素庄重；二战中被炸毁，战后作为国家重建的象征被优先修复。如今教堂内部不再用于宗教活动，而是举办展览、颁奖典礼（如著名的德国书业和平奖）与纪念集会。底层环形展厅陈列 1848 年革命的历史图文。它紧邻罗马广场、免费开放，适合关注德国近代史与政治文化的游客。",
+      "hours": "每日约 10:00–17:00（举办颁奖或活动时临时闭馆）",
+      "price": "免费",
+      "duration": "约 30 分钟",
+      "tips": "常有临时展览；德国书业和平奖颁奖日不对外开放",
+      "mapQuery": "Paulskirche, Frankfurt am Main",
+      "rating": 4.3,
+      "reviews": 120,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "德国民主的起点，站在议会大厅里很有历史厚重感，值得一看。",
+          "type": "good"
+        },
+        {
+          "t": "免费开放，环形展厅的图文把 1848 年革命讲得很清楚。",
+          "type": "good"
+        },
+        {
+          "t": "建筑外观朴素，内部偏简洁，适合对历史感兴趣的人。",
+          "type": "neutral"
+        },
+        {
+          "t": "没有历史背景的话会觉得平平无奇，就是个空旷的大厅。",
+          "type": "bad"
+        },
+        {
+          "t": "赶上办活动闭馆，白跑一趟，建议先查开放信息。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Frankfurt_am_Main%2C_Paulskirche_--_2015_--_6701.jpg/960px-Frankfurt_am_Main%2C_Paulskirche_--_2015_--_6701.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Frankfurt_am_Main%2C_Paulskirche_--_2015_--_6740.jpg/960px-Frankfurt_am_Main%2C_Paulskirche_--_2015_--_6740.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Paulskirche%2C_Frankfurt%2C_South_view_20200419_1.jpg/960px-Paulskirche%2C_Frankfurt%2C_South_view_20200419_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Frankfurter-Paulskirche-vor-Dom-Roemer-Areal-2018-Ffm-10054.jpg/960px-Frankfurter-Paulskirche-vor-Dom-Roemer-Areal-2018-Ffm-10054.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Paulskirche%2C_Frankfurt%2C_hall.jpg/960px-Paulskirche%2C_Frankfurt%2C_hall.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Paulskirche_Frankfurt_am_Main_2021-08-17_01.jpg/960px-Paulskirche_Frankfurt_am_Main_2021-08-17_01.jpg"
+      ],
+      "id": "paulskirche",
+      "visit": "inside"
+    },
+    {
+      "name": "罗马广场",
+      "nameEn": "Römerberg",
+      "tag": "老城中心 · 中世纪广场",
+      "selected": true,
+      "intro": "罗马广场是法兰克福老城的心脏，自中世纪起便是城市的政治与市集中心。广场东侧的「东排屋」是六栋色彩缤纷的半木结构山墙房，二战被毁后按原样重建，成为法兰克福最经典的明信片画面；西侧矗立着市政厅罗默，中央是文艺复兴风格的正义女神喷泉。这里曾见证神圣罗马帝国皇帝加冕后的盛大庆典，如今是圣诞集市与各类节庆的舞台。游客可漫步石板街巷、品尝苹果酒与香肠，感受历史与市井交织的氛围，是打卡法兰克福的第一站，适合各类人群与亲子家庭。",
+      "hours": "户外广场全天开放；周边商铺与集市约 10:00–20:00；12 月圣诞集市期间延长",
+      "price": "免费",
+      "duration": "约 1–2 小时",
+      "tips": "清晨或傍晚人少、光线柔和最适合拍照；12 月圣诞集市最为热闹但人潮拥挤",
+      "mapQuery": "Römerberg, Frankfurt am Main",
+      "rating": 4.7,
+      "reviews": 581,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "东排屋的彩色山墙太上镜了，随手一拍就是明信片，老城氛围满分。",
+          "type": "good"
+        },
+        {
+          "t": "圣诞集市季来的，灯光、热红酒和木屋摊位美到窒息，强烈推荐冬天来。",
+          "type": "good"
+        },
+        {
+          "t": "广场不大，半小时能逛完，作为老城起点串联周边景点很方便。",
+          "type": "neutral"
+        },
+        {
+          "t": "游客实在太多，想拍没人的空镜几乎不可能，餐厅也偏贵。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季人挤人，扒手需留意，周边纪念品店价格偏坑。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/92/R%C3%B6merberg_Frankfurt_abends.jpg/960px-R%C3%B6merberg_Frankfurt_abends.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/R%C3%B6merberg_square_in_Frankfurt_am_Main.jpg/960px-R%C3%B6merberg_square_in_Frankfurt_am_Main.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1e/R%C3%B6merberg_in_Frankfurt.jpg/960px-R%C3%B6merberg_in_Frankfurt.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/Frankfurt_am_Main%2C_Ostzeile_am_Samstagsberg_--_2015_--_6679.jpg/960px-Frankfurt_am_Main%2C_Ostzeile_am_Samstagsberg_--_2015_--_6679.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/R%C3%B6merberg_houses_on_the_west_side.jpg/960px-R%C3%B6merberg_houses_on_the_west_side.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/59/R%C3%B6merberg_%28Frankfurt%29.jpg/960px-R%C3%B6merberg_%28Frankfurt%29.jpg"
+      ],
+      "id": "roemerberg",
+      "visit": "inside"
+    },
+    {
+      "name": "罗默（老市政厅）",
+      "nameEn": "Römer",
+      "tag": "市政厅 · 城市地标",
+      "selected": true,
+      "intro": "罗默是法兰克福的市政厅，也是城市最著名的地标之一，自 1405 年起便作为市政厅使用，至今已逾六百年。它由三栋相连的山墙式建筑组成，中央一栋立面装饰着神圣罗马帝国四位皇帝的雕像，阶梯状的山墙轮廓辨识度极高，是罗马广场上最抢镜的建筑。二楼的「皇帝厅」墙上挂有 52 位神圣罗马帝国皇帝的肖像，昔日皇帝加冕后曾在此设宴庆祝。罗默至今仍是市政办公与婚姻登记之地，广场一侧常见新人拍照。它正对罗马广场，是拍摄半木老屋与市政厅同框的最佳位置，适合历史爱好者与摄影游客。",
+      "hours": "皇帝厅对外开放约 10:00–13:00、14:00–17:00（举办活动或婚礼时临时关闭）",
+      "price": "皇帝厅成人约 €2、优惠 €0.5；外观广场免费",
+      "duration": "约 30–45 分钟",
+      "tips": "遇市政活动或婚礼会临时闭馆，出发前可查官网；外立面广场随时可拍",
+      "mapQuery": "Römer, Frankfurt am Main Rathaus",
+      "rating": 4.3,
+      "reviews": 181,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "三连山墙的立面太经典了，配上广场就是法兰克福的标准照。",
+          "type": "good"
+        },
+        {
+          "t": "皇帝厅里 52 位皇帝画像很震撼，票价便宜性价比高。",
+          "type": "good"
+        },
+        {
+          "t": "主要看外观，内部开放区域不大，适合和罗马广场一起逛。",
+          "type": "neutral"
+        },
+        {
+          "t": "常有婚礼和活动闭馆，扑空两次才进去，运气成分大。",
+          "type": "bad"
+        },
+        {
+          "t": "内部能参观的空间比想象中小，专程为室内而来会略失望。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Frankfurt%2C_R%C3%B6mer_%28Rathaus%29_auf_dem_R%C3%B6merberg_--_Frankfurt%2C_Roemer_%28city_hall%29_on_the_Roemer_Hill_%2813552663995%29.jpg/960px-Frankfurt%2C_R%C3%B6mer_%28Rathaus%29_auf_dem_R%C3%B6merberg_--_Frankfurt%2C_Roemer_%28city_hall%29_on_the_Roemer_Hill_%2813552663995%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Frankfurt_am_Main%2C_Rathaus_--_2015_--_6746-7.jpg/960px-Frankfurt_am_Main%2C_Rathaus_--_2015_--_6746-7.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Frankfurt_am_Main%2C_R%C3%B6mer_--_2015_--_6695-9.jpg/960px-Frankfurt_am_Main%2C_R%C3%B6mer_--_2015_--_6695-9.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/57/R%C3%B6mer%2C_Frankfurt_am_Main%2C_East_view_20190915_1.jpg/960px-R%C3%B6mer%2C_Frankfurt_am_Main%2C_East_view_20190915_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/R%C3%B6mer_Frankfurt_2012.jpg/960px-R%C3%B6mer_Frankfurt_2012.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Frankfurt_am_Main%2C_R%C3%B6mer_--_2015_--_6732.jpg/960px-Frankfurt_am_Main%2C_R%C3%B6mer_--_2015_--_6732.jpg"
+      ],
+      "id": "roemer",
+      "visit": "inside"
+    },
+    {
+      "name": "正义喷泉",
+      "nameEn": "Gerechtigkeitsbrunnen",
+      "tag": "历史喷泉 · 罗马广场中心",
+      "selected": true,
+      "intro": "正义喷泉坐落在罗马广场正中央，是法兰克福老城的标志性景观之一。喷泉顶端矗立着手持天平与利剑的正义女神尤斯提提亚青铜雕像，与常见形象不同的是，她双眼睁开而非蒙眼，寓意公正需明察秋毫。喷泉最早建于 16 世纪，最初为砂岩材质，现存雕像为 19 世纪的青铜复制品，历史上曾在皇帝加冕庆典时喷涌红白葡萄酒供市民畅饮。喷泉四周环绕着罗默市政厅、木筋屋东排与老圣尼各老堂，是拍摄罗马广场全景时的天然中心焦点。夜幕降临后灯光映照下的女神像格外庄严。它是游客在广场驻足合影、感受法兰克福自由市传统的必到之处。",
+      "hours": "全天开放",
+      "price": "免费",
+      "duration": "约 10–15 分钟",
+      "tips": "喷泉四周即是罗马广场核心，站在此处可一次拍下市政厅与东排木筋屋；圣诞市集期间此处最为热闹",
+      "mapQuery": "Gerechtigkeitsbrunnen, Römerberg, Frankfurt am Main",
+      "rating": 4.4,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "正义女神睁着眼睛的细节很特别，导游一讲解才发现其中的寓意。",
+          "type": "good"
+        },
+        {
+          "t": "站在喷泉边能把整个罗马广场收进镜头，是拍全景的最佳位置。",
+          "type": "good"
+        },
+        {
+          "t": "喷泉本身不算大，主要是作为广场地标合影用。",
+          "type": "neutral"
+        },
+        {
+          "t": "旺季喷泉周围坐满了休息的游客，想拍干净的画面得早起。",
+          "type": "bad"
+        },
+        {
+          "t": "冬天有时喷泉会停水放空，看起来略显冷清。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Frankfurt_-_Justice_fountain_in_R%C3%B6merberg_-_1019.jpg/960px-Frankfurt_-_Justice_fountain_in_R%C3%B6merberg_-_1019.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/Frankfurt_R%C3%B6merberg_Gerechtigkeitsbrunnen_100-h.jpg/960px-Frankfurt_R%C3%B6merberg_Gerechtigkeitsbrunnen_100-h.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/42/Frankfurt_am_Main%2C_Gerechtigkeitsbrunnen_--_2015_--_6733.jpg/960px-Frankfurt_am_Main%2C_Gerechtigkeitsbrunnen_--_2015_--_6733.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f5/Frankfurt_am_Main%2C_Gerechtigkeitsbrunnen_--_2015_--_6735.jpg/960px-Frankfurt_am_Main%2C_Gerechtigkeitsbrunnen_--_2015_--_6735.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Frankfurt_am_Main%2C_R%C3%B6merberg%2C_Justitia.JPG/960px-Frankfurt_am_Main%2C_R%C3%B6merberg%2C_Justitia.JPG",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Frankfurt_Am_Main-Gerechtigkeitsbrunnen-Faber1552.jpg/960px-Frankfurt_Am_Main-Gerechtigkeitsbrunnen-Faber1552.jpg"
+      ],
+      "id": "gerechtigkeitsbrunnen",
+      "visit": "outside"
+    },
+    {
+      "name": "老圣尼各老堂",
+      "nameEn": "Alte Nikolaikirche",
+      "tag": "历史教堂 · 罗马广场地标",
+      "selected": true,
+      "intro": "老圣尼各老堂矗立在罗马广场南侧，是法兰克福最古老的建筑之一，始建于 13 世纪，最初为宫廷礼拜堂，后成为市民集市广场上的地标。教堂为红砂岩砌筑的哥特式风格，屋顶高耸的尖塔与山墙线条精致优雅，与广场对面色彩斑斓的木筋屋「东排」相映成趣，是罗马广场经典构图中不可或缺的一角。教堂在二战中幸免于严重损毁，保留了不少原始结构。塔楼中悬挂的排钟每天定时奏响乐曲，钟声回荡在老城上空，颇具历史韵味。内部虽小巧朴素，却因彩绘玻璃与静谧氛围而值得一进。它免费开放，是游览罗马广场时顺道参观的好去处。",
+      "hours": "约 10:00–20:00（各季节略有不同）",
+      "price": "免费",
+      "duration": "约 15–20 分钟",
+      "tips": "每天定时有排钟演奏，可留意时间前往聆听；教堂内部安静，请保持轻声",
+      "mapQuery": "Alte Nikolaikirche, Römerberg, Frankfurt am Main",
+      "rating": 4.4,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "红砂岩的小教堂特别上镜，是罗马广场照片里最有味道的一角。",
+          "type": "good"
+        },
+        {
+          "t": "正好赶上塔楼排钟演奏，钟声在老城回荡，很有氛围。",
+          "type": "good"
+        },
+        {
+          "t": "教堂内部比较小也很朴素，参观几分钟就出来了。",
+          "type": "neutral"
+        },
+        {
+          "t": "开放时间不太固定，我去的时候大门正好关着只能看外观。",
+          "type": "bad"
+        },
+        {
+          "t": "广场人太多，想在教堂前拍张没有游客的照片几乎不可能。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Alte_Nikolaikirche%2C_Frankfurt%2C_North_view_20191013_1.jpg/960px-Alte_Nikolaikirche%2C_Frankfurt%2C_North_view_20191013_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Alte_Nikolaikirche_%28Frankfurt_am_Main%29.jpg/960px-Alte_Nikolaikirche_%28Frankfurt_am_Main%29.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/Frankfurt_R%C3%B6merberg_Ostzeile_Alte_Nikolaikirche_2.jpg/960px-Frankfurt_R%C3%B6merberg_Ostzeile_Alte_Nikolaikirche_2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fc/Frankfurt_Am_Main-Alte_Nikolaikirche-Ansicht_vom_Roemerberg-20081230.jpg/960px-Frankfurt_Am_Main-Alte_Nikolaikirche-Ansicht_vom_Roemerberg-20081230.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Alte_Nikolaikirche%2C_interior%2C_Frankfurt%2C_2017-10-14.jpg/960px-Alte_Nikolaikirche%2C_interior%2C_Frankfurt%2C_2017-10-14.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Frankfurt_-_Alte_Nikolaikirche_-_panoramio.jpg/960px-Frankfurt_-_Alte_Nikolaikirche_-_panoramio.jpg"
+      ],
+      "id": "alte-nikolaikirche",
+      "visit": "outside"
+    },
+    {
+      "name": "铁桥",
+      "nameEn": "Eiserner Steg",
+      "tag": "地标步行桥 · 天际线打卡",
+      "selected": true,
+      "intro": "铁桥是横跨美因河、连接老城与萨克森豪森区的一座新哥特式钢结构人行桥，1869 年由市民集资兴建，是法兰克福最具人气的地标之一。桥身线条轻盈优雅，站在桥上向东可将大教堂红塔、罗马广场与整片摩天楼天际线一同收入镜头，是拍摄法兰克福「老城 + 金融区」同框经典画面的首选机位，日落与夜晚灯光亮起时尤为迷人。桥两侧的铁栏挂满了情侣们留下的同心锁，浪漫气息浓厚。桥希腊文栏杆上还刻有荷马史诗诗句。步行过桥即可抵达对岸的博物馆河岸与萨克森豪森苹果酒馆区，是串联两岸游览的必经之处，全天免费开放。",
+      "hours": "全天开放",
+      "price": "免费",
+      "duration": "约 20–30 分钟",
+      "tips": "清晨或日落时人少光线好，最适合拍天际线；桥面较窄，早晚通勤时段人流较多",
+      "mapQuery": "Eiserner Steg, Frankfurt am Main",
+      "rating": 4.5,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "拍法兰克福天际线的最佳位置，老城红塔和摩天楼一次同框，太出片了。",
+          "type": "good"
+        },
+        {
+          "t": "傍晚过桥去萨克森豪森喝苹果酒，桥上夜景灯光超浪漫。",
+          "type": "good"
+        },
+        {
+          "t": "桥本身很短，主要是看风景和拍照，快走几分钟就到头了。",
+          "type": "neutral"
+        },
+        {
+          "t": "同心锁挂得有点杂乱，栏杆看起来略显拥挤破旧。",
+          "type": "bad"
+        },
+        {
+          "t": "旺季桥上全是人和自拍杆，想拍张没人的空镜几乎不可能。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/Eiserner-Steg-2012-Ffm-977-8.jpg/960px-Eiserner-Steg-2012-Ffm-977-8.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Eiserner_Steg%28Iron_Footbridge%29%2C_Frankfurt%2C_Germany_%28Ank_Kumar%29_01.jpg/960px-Eiserner_Steg%28Iron_Footbridge%29%2C_Frankfurt%2C_Germany_%28Ank_Kumar%29_01.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Eiserner_Steg%2C_Frankfurt%2C_South_view_20211016_1.jpg/960px-Eiserner_Steg%2C_Frankfurt%2C_South_view_20211016_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/Frankfurt_am_Main%2C_de_Eiserner_Steg_Dm_met_skyline_IMG_1525_2024-05-26_12.30.jpg/960px-Frankfurt_am_Main%2C_de_Eiserner_Steg_Dm_met_skyline_IMG_1525_2024-05-26_12.30.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a8/Frankfurter_Dom_and_Eisener_Steg%2C_Southwest_view_20210220_1.jpg/960px-Frankfurter_Dom_and_Eisener_Steg%2C_Southwest_view_20210220_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Love_padlocks_-_Eiserner_Steg_-_Frankfurt_Germany.jpg/960px-Love_padlocks_-_Eiserner_Steg_-_Frankfurt_Germany.jpg"
+      ],
+      "id": "eiserner-steg",
+      "visit": "inside"
+    },
+    {
+      "name": "欧洲央行总部",
+      "nameEn": "European Central Bank",
+      "tag": "现代地标 · 建筑打卡",
+      "selected": true,
+      "intro": "欧洲央行总部大楼坐落于法兰克福东区美因河畔，2014 年落成后成为城市最引人注目的现代建筑地标之一。这座由维也纳蓝天组建筑事务所设计的双塔高达约 185 米，两座错位交织的玻璃幕墙塔身以一座通高的中庭相连，扭转上升的造型充满未来感。大楼巧妙地将原有的老批发市场大厅「大市场厅」包裹其中，形成新旧对话的独特景观。作为整个欧元区货币政策的中枢，这里象征着欧洲金融的心脏地位。虽然大楼内部不对外开放参观，但沿着美因河东岸的步道或从对岸眺望，都能将这座地标与河景一同收入镜头，是建筑与摄影爱好者钟爱的打卡点，傍晚灯光亮起时尤为壮观。",
+      "hours": "外观全天可观赏（内部不对外开放）",
+      "price": "免费（外观）",
+      "duration": "约 30–45 分钟",
+      "tips": "内部不对公众开放，以观赏外观和拍照为主；沿美因河东岸步道或从对岸取景效果最佳",
+      "mapQuery": "European Central Bank, Sonnemannstraße, Frankfurt am Main",
+      "rating": 4.3,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "双塔扭转交织的造型太有设计感了，从河对岸拍全景特别出片。",
+          "type": "good"
+        },
+        {
+          "t": "把老市场大厅包进现代玻璃塔里，新旧结合的想法很巧妙。",
+          "type": "good"
+        },
+        {
+          "t": "只能看外观，内部不开放，适合建筑迷远观拍照。",
+          "type": "neutral"
+        },
+        {
+          "t": "位置在东区离老城有点距离，专程过来会觉得性价比一般。",
+          "type": "bad"
+        },
+        {
+          "t": "周围比较空旷，除了拍大楼没什么别的可逛的。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/European_Central_Bank_Frankfurt_Germany_18_Feb_2023.jpg/960px-European_Central_Bank_Frankfurt_Germany_18_Feb_2023.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2b/European_Central_Bank_Frankfurt_Germany_18_Feb_2023_2.jpg/960px-European_Central_Bank_Frankfurt_Germany_18_Feb_2023_2.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/Seat_of_the_European_Central_Bank_and_Frankfurt_Skyline_at_dawn_20150422_1.jpg/960px-Seat_of_the_European_Central_Bank_and_Frankfurt_Skyline_at_dawn_20150422_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_13.jpg/960px-European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_13.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_14.jpg/960px-European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_14.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_15.jpg/960px-European_Central_Bank_-_building_under_construction_-_Frankfurt_-_Germany_-_15.jpg"
+      ],
+      "id": "ecb",
+      "visit": "outside"
+    },
+    {
+      "name": "法兰克福大教堂",
+      "nameEn": "Kaiserdom St. Bartholomäus",
+      "tag": "皇帝加冕地 · 哥特式教堂",
+      "selected": true,
+      "intro": "法兰克福大教堂全称「圣巴多罗买皇帝大教堂」，是一座红砂岩哥特式教堂，始建于 13 世纪。因 1356 年起神圣罗马帝国在此选举皇帝、1562 年起举行加冕典礼，它被尊称为「皇帝大教堂」，是德意志历史上最重要的政治象征之一。教堂 95 米高的塔楼是老城天际线的标志，登上 328 级台阶可抵达约 66 米高的观景平台，俯瞰罗马广场与美因河风光。堂内保存有 15 世纪的「圣母安眠」祭坛与精美唱诗席。教堂历经战火与火灾多次重建，如今免费开放，登塔需另购票，适合历史与建筑爱好者。",
+      "hours": "教堂每日约 9:00–20:00（弥撒时段限制参观）；塔楼旺季约 10:00–18:00，冬季缩短",
+      "price": "教堂免费；登塔成人约 €4、优惠 €2",
+      "duration": "约 1 小时（含登塔约 1.5 小时）",
+      "tips": "登塔台阶陡窄且无电梯，体力不佳者慎登；周日上午礼拜不宜参观",
+      "mapQuery": "Frankfurter Dom, Frankfurt am Main",
+      "rating": 4.6,
+      "reviews": 346,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "红砂岩外墙庄严大气，登塔虽累但顶上老城与天际线的视野绝了。",
+          "type": "good"
+        },
+        {
+          "t": "了解神圣罗马帝国加冕史的必去点，堂内祭坛和唱诗席很精美。",
+          "type": "good"
+        },
+        {
+          "t": "教堂本身免费值得一看，登塔要排队且台阶多，量力而行。",
+          "type": "neutral"
+        },
+        {
+          "t": "塔楼楼梯又窄又陡，恐高和带小孩的不建议爬，中途很难错身。",
+          "type": "bad"
+        },
+        {
+          "t": "赶上弥撒不能随意走动，内部光线偏暗，拍照效果一般。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6676.jpg/960px-Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6676.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/51/Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6727.jpg/960px-Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6727.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6728.jpg/960px-Frankfurt_am_Main%2C_Kaiserdom_--_2015_--_6728.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Kaiserdom_St._Bartholom%C3%A4us_-_Frankfurt_-_Germany_-_04.jpg/960px-Kaiserdom_St._Bartholom%C3%A4us_-_Frankfurt_-_Germany_-_04.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Kaiserdom_St._Bartholom%C3%A4us_interior.jpg/960px-Kaiserdom_St._Bartholom%C3%A4us_interior.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Tower_of_Frankfurt_Cathedral.jpg/960px-Tower_of_Frankfurt_Cathedral.jpg"
+      ],
+      "id": "kaiserdom",
+      "visit": "inside"
+    },
+    {
+      "name": "小市场厅",
+      "nameEn": "Kleinmarkthalle",
+      "tag": "室内市集 · 美食",
+      "selected": true,
+      "intro": "小市场厅是法兰克福老城中心一座人气爆棚的室内市集，自 1954 年重建以来一直是本地人采买与觅食的心脏地带，也是体验城市烟火气与地道美食的绝佳窗口。宽敞的大厅内聚集着上百个摊位，新鲜果蔬、奶酪火腿、香料坚果、鲜花海鲜与世界各地的食材琳琅满目，香气四溢。这里最出名的当属现做的法兰克福特色小吃——夹着煎香肠的小面包，配一杯当地苹果酒最是地道；二层还有多家小酒馆与熟食摊，可坐下小酌品尝。摊主热情、价格实惠，无论是买手信、尝美食还是感受市井生活，这座热闹的市场都能让人流连忘返，是老城行程中不可错过的味觉体验。",
+      "hours": "周一–周五 08:00–18:00，周六 08:00–16:00；周日休",
+      "price": "免费进入，餐食按摊位计价",
+      "duration": "约 1 小时",
+      "tips": "别错过现做香肠面包配苹果酒；周六人最多，午餐时段尤挤",
+      "mapQuery": "Kleinmarkthalle, Hasengasse 5-7 Frankfurt",
+      "rating": 4.5,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "现做的香肠面包配苹果酒太地道了，摊位琳琅满目，逛吃一体超满足。",
+          "type": "good"
+        },
+        {
+          "t": "本地人气很旺，食材新鲜价格实惠，感受法兰克福烟火气的最佳地方。",
+          "type": "good"
+        },
+        {
+          "t": "空间不大，饭点人挤人，找位置坐下吃需要点耐心。",
+          "type": "neutral"
+        },
+        {
+          "t": "周日闭馆，营业时间偏短，晚到或赶周末的游客容易扑空。",
+          "type": "bad"
+        },
+        {
+          "t": "热门摊位排队较长，二层小酒馆用餐高峰几乎一座难求。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Kleinmarkthalle_Frankfurt_am_Main.jpg/960px-Kleinmarkthalle_Frankfurt_am_Main.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/Kleinmarkthalle%2C_Frankfurt%2C_Interior_view_20190914_1.jpg/960px-Kleinmarkthalle%2C_Frankfurt%2C_Interior_view_20190914_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Kleinmarkthalle_Frankfurt_Einblick.jpg/960px-Kleinmarkthalle_Frankfurt_Einblick.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Kleinmarkthalle_Frankfurt_Gew%C3%BCrzstand.jpg/960px-Kleinmarkthalle_Frankfurt_Gew%C3%BCrzstand.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Kleinmarkthalle_Frankfurt_Marktszene.jpg/960px-Kleinmarkthalle_Frankfurt_Marktszene.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/Kleinmarkthalle_Frankfurt_Haupteingang.jpg/960px-Kleinmarkthalle_Frankfurt_Haupteingang.jpg"
+      ],
+      "id": "kleinmarkthalle",
+      "visit": "outside"
+    },
+    {
+      "name": "MyZeil 购物中心",
+      "nameEn": "MyZeil",
+      "tag": "网红建筑 · 购物",
+      "selected": true,
+      "intro": "MyZeil 是位于采尔大街上的一座前卫购物中心，2009 年开业，以其大胆奇特的建筑外观成为法兰克福最上镜的现代地标之一。由意大利建筑师法比奥·诺文布雷设计的玻璃幕墙如被巨力撕开一道巨大的漩涡状「黑洞」，从街面一直卷入建筑深处，天光顺着不规则的玻璃网格倾泻而下，内部还有据称欧洲最长的室内自动扶梯直通高层。这里汇集时装、电子、餐饮与美食广场，顶层餐厅可俯瞰采尔大街人潮。即便不购物，仅是欣赏这件流动感十足的建筑艺术、在漩涡玻璃下仰拍打卡，也值得专程一来，是逛街与拍照两相宜的热门地点。",
+      "hours": "商场约 周一–周六 10:00–20:00（部分店铺至 21:00），周日休",
+      "price": "免费进入",
+      "duration": "约 1–1.5 小时",
+      "tips": "入口漩涡玻璃仰拍最出片；乘长扶梯到高层餐饮区可俯瞰采尔大街",
+      "mapQuery": "MyZeil, Zeil 106 Frankfurt",
+      "rating": 4.3,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "那个漩涡状的玻璃穹顶太震撼了，随手一拍就是大片，建筑本身就是景点。",
+          "type": "good"
+        },
+        {
+          "t": "超长扶梯很有意思，顶层美食广场选择多，逛累了休息很方便。",
+          "type": "good"
+        },
+        {
+          "t": "本质还是个购物中心，品牌和别处大同小异，主要亮点是外观。",
+          "type": "neutral"
+        },
+        {
+          "t": "周日基本关门，专程来的话容易扑空，要留意营业时间。",
+          "type": "bad"
+        },
+        {
+          "t": "内部空间感一般，除了那道玻璃亮点外整体略显普通。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Frankfurt%2C_Germany_-_MyZeil_front_during_daytime.jpg/960px-Frankfurt%2C_Germany_-_MyZeil_front_during_daytime.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f8/Frankfurt_am_Main%2C_MyZeil_--_2015_--_6765.jpg/960px-Frankfurt_am_Main%2C_MyZeil_--_2015_--_6765.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Frankfurt_am_Main%2C_MyZeil_--_2015_--_6767.jpg/960px-Frankfurt_am_Main%2C_MyZeil_--_2015_--_6767.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/5/55/Myzeil-knippershelbig-02.jpg/960px-Myzeil-knippershelbig-02.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/MyZeil_Frankfurt_Nacht.jpg/960px-MyZeil_Frankfurt_Nacht.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Frankfurt-MyZeil-02-2016-gje.jpg/960px-Frankfurt-MyZeil-02-2016-gje.jpg"
+      ],
+      "id": "myzeil",
+      "visit": "inside"
+    },
+    {
+      "name": "老歌剧院",
+      "nameEn": "Alte Oper",
+      "tag": "历史建筑 · 音乐厅",
+      "selected": true,
+      "intro": "老歌剧院是法兰克福的文化地标，1880 年以意大利文艺复兴风格落成，落成之初被誉为德国最美的歌剧院之一，连德皇威廉一世都赞叹不已。二战中建筑被炸成废墟，一度险遭拆除，经市民多年奔走募捐后于 1981 年按原貌重建，如今作为顶级音乐会与会议中心重获新生。宏伟的砂岩立面、山花上的骑士雕像与金色铭文「献给真善美」令人过目难忘，前方的歌剧院广场与喷泉是市民休憩、街头艺人表演的热闹场所。夜晚灯光映照下建筑格外壮观，是散步与拍照的好去处，即便不入内听音乐会，也值得在广场驻足欣赏这座浴火重生的宫殿。",
+      "hours": "广场全天开放；内部凭音乐会门票或导览进入",
+      "price": "外观免费；音乐会票价视演出而定",
+      "duration": "约 30–45 分钟",
+      "tips": "夜晚亮灯后立面最上镜；广场常有街头表演，适合坐下小憩",
+      "mapQuery": "Alte Oper, Opernplatz Frankfurt",
+      "rating": 4.5,
+      "reviews": 100,
+      "ratingSource": "Trip.com / Tripadvisor 综合",
+      "reviewList": [
+        {
+          "t": "砂岩立面庄重典雅，很难想象是战后按原样重建的，夜景尤其漂亮。",
+          "type": "good"
+        },
+        {
+          "t": "在里面听了一场音乐会，音响效果和氛围都一流，值回票价。",
+          "type": "good"
+        },
+        {
+          "t": "不听演出的话主要看外观，广场拍拍照十来分钟也就够了。",
+          "type": "neutral"
+        },
+        {
+          "t": "周边都是现代高楼，取景时背景略显杂乱不够纯粹。",
+          "type": "bad"
+        },
+        {
+          "t": "内部平时不对外开放，只想进去看看的游客会有点失望。",
+          "type": "bad"
+        }
+      ],
+      "photos": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Alte_Oper%2C_Frankfurt%2C_South_view_20190914_1.jpg/960px-Alte_Oper%2C_Frankfurt%2C_South_view_20190914_1.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/7/72/Alte_Oper_Frankfurt_2019.jpg/960px-Alte_Oper_Frankfurt_2019.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Alte_Oper_Frankfurt_2012.jpg/960px-Alte_Oper_Frankfurt_2012.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/4/48/Alte_Oper_Frankfurt_abends_2011-07.jpg/960px-Alte_Oper_Frankfurt_abends_2011-07.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/FFM-AlteOper-HDR--DINA4.jpg/960px-FFM-AlteOper-HDR--DINA4.jpg",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/0/04/Alte_Oper_Frankfurt_Innenraum.jpg/960px-Alte_Oper_Frankfurt_Innenraum.jpg"
+      ],
+      "id": "alte-oper",
+      "visit": "outside"
+    },
+    {
+      "kind": "note",
+      "noteType": "还车",
+      "text": "还车：法兰克福机场"
+    }
+  ],
+  "_day": {
+    "n": 12,
+    "date": "2026-10-11",
+    "weekday": "周日",
+    "cities": [
+      "巴哈拉赫",
+      "法兰克福"
+    ],
+    "chainLabel": "巴哈拉赫➡️法兰克福",
+    "start": "布旅彻托旅馆 Hotel Blüchertal",
+    "hotel": "（未填）",
+    "meals": {
+      "b": "—",
+      "l": "—",
+      "d": "—"
+    }
+  }
+};
+
+/* =========================== 渲染逻辑（一般无需修改） =========================== */
+
+function stars(r){
+  if(r==null || isNaN(r)) return "暂无";
+  const full = Math.round(r);
+  return "★".repeat(full) + "☆".repeat(5-full);
+}
+const TYPE_LABEL = {good:"好评", neutral:"中评", bad:"差评"};
+function mapSrc(q, z){
+  return "https://maps.google.com/maps?q=" + encodeURIComponent(q) + "&z=" + (z||15) + "&output=embed";
+}
+const STORE_KEY = DATA._storeKey || ("taf-sel-" + (DATA.cityEn||DATA.city||"travel"));
+/* 三态参观状态：inside=入内参观 / outside=外部参观 / null=不参观。
+   同时兼容旧数据的布尔 selected（true→inside，false→不参观）。 */
+function getVisit(a){
+  if(a.visit==="inside"||a.visit==="outside") return a.visit;
+  if(a.selected===true) return "inside";
+  return null;
+}
+function loadStates(){
+  // 优先从 localStorage 读取已保存的参观状态（按城市隔离）；无记录时回退到 DATA 默认。
+  const map = new Map();
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw){
+      const saved = JSON.parse(raw);
+      if(saved && saved.states){
+        DATA.attractions.forEach(a=> map.set(a.id, saved.states[a.id]||null));
+        return map;
+      }
+      // 兼容旧版只存 ids 的存档
+      if(saved && Array.isArray(saved.ids)){
+        const s = new Set(saved.ids);
+        DATA.attractions.forEach(a=> map.set(a.id, s.has(a.id)?"inside":null));
+        return map;
+      }
+    }
+  } catch(e){ /* localStorage 不可用时回退默认 */ }
+  DATA.attractions.forEach(a=>{ if(a.kind!=="note") map.set(a.id, getVisit(a)); });
+  return map;
+}
+function writeSel(){
+  // 写入机器可读的 #taf-selection JSON（供其它 skill 读取）：记录全部景点及其三态参观状态
+  // （visit: "inside" 入内参观 / "outside" 外部参观 / null 不参观），与 localStorage 存档保持一致。
+  const sel = DATA.attractions.map(a=>({id:a.id, name:a.name, visit: getVisit(a) || null}));
+  const obj = { city: DATA.city, cityEn: DATA.cityEn, total: DATA.attractions.length, selected: sel };
+  document.getElementById("taf-selection").textContent = JSON.stringify(obj);
+}
+function updateChip(id, v){
+  const chip = document.querySelector('nav.toc a[data-id="'+id+'"]');
+  if(chip){
+    chip.classList.remove("chip-inside","chip-outside","chip-none");
+    chip.classList.add(v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none");
+  }
+}
+function applyVisit(id, v){
+  // v: "inside" | "outside" | null
+  const a = DATA.attractions.find(x=>x.id===id);
+  if(a){ a.visit = v; a.selected = v!==null; }
+  const card = document.getElementById(id);
+  if(card){
+    const btn = card.querySelector(".visit-toggle");
+    if(btn){
+      btn.classList.remove("vt-none","vt-inside","vt-outside");
+      btn.classList.add(v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none");
+      const ico = btn.querySelector(".vt-ico");
+      const txt = btn.querySelector(".vt-txt");
+      if(ico) ico.textContent = v==="inside"?"✓":v==="outside"?"○":"○";
+      if(txt) txt.textContent = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    }
+    card.setAttribute("data-visit", v||"none");
+    card.setAttribute("data-selected", v!==null ? "true":"false");
+  }
+  updateChip(id, v);
+  writeSel();
+  markDirty(); // 标记有未保存更改
+}
+function cycleVisit(id){
+  const a = DATA.attractions.find(x=>x.id===id);
+  const cur = a ? (a.visit==="inside"?"inside":a.visit==="outside"?"outside":null) : null;
+  const next = cur==="inside" ? "outside" : cur==="outside" ? null : "inside";
+  applyVisit(id, next);
+}
+
+/* 点击标签栏 chip 后跳转到对应卡片：桌面端平滑滚动到锚点，手机端横向滑动到卡片 */
+function navigateToCard(id, idx){
+  if(window.matchMedia("(max-width:760px)").matches){
+    var card = document.getElementById(id);
+    var deck = document.getElementById("list");
+    if(card && deck){
+      var navH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--nav-h")) || 56;
+      var deckTop = deck.getBoundingClientRect().top + window.scrollY - navH - 8;
+      window.scrollTo({top: Math.max(0, deckTop), behavior:"smooth"});
+      var cardLeft = card.getBoundingClientRect().left - deck.getBoundingClientRect().left + deck.scrollLeft;
+      deck.scrollTo({left: cardLeft, behavior:"smooth"});
+      var resetTop = function(){ card.scrollTop = 0; };
+      requestAnimationFrame(resetTop);
+      setTimeout(resetTop, 450);
+    }
+  } else {
+    var card = document.getElementById(id);
+    var head = card ? card.querySelector(".a-head") : null;
+    if(head) head.scrollIntoView({behavior:"smooth", block:"start"});
+  }
+  centerChip(idx);
+}
+
+/* 物流简化卡（停车/取车）：仅标题、谷歌地图、费用/说明 */
+function renderLogistics(a, i){
+  const list = document.getElementById("list");
+  const toc = document.getElementById("chips");
+  if(!a.id) a.id = "log-" + i;
+  const aEl = document.createElement("section");
+  aEl.className = "attraction logistics";
+  aEl.id = a.id;
+  aEl.setAttribute("data-visit", "none");
+  aEl.setAttribute("data-selected", "false");
+  const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || a.name);
+  aEl.innerHTML = `
+    <div class="left">
+      <div class="a-head"><h2>${a.name}</h2></div>
+      <div class="tag-row"><span class="tag">${a.tag || ("物流 · " + (a.noteType||""))}</span></div>
+      <div class="facts">
+        <div class="fact"><h4>${a.noteType==="取车"?"取车说明":a.noteType==="住宿"?"住宿":"停车费用"}</h4><p>${a.price || "—"}</p></div>
+      </div>
+    </div>
+    <aside class="right">
+      <div class="mapcard">
+        <iframe class="map-frame" loading="lazy" title="Google 地图"
+          src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+        <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+      </div>
+    </aside>`;
+  list.appendChild(aEl);
+  const chip = document.createElement("a");
+  chip.href = "#" + aEl.id;
+  chip.dataset.id = a.id;
+  chip.dataset.idx = i;
+  chip.textContent = a.name;
+  chip.className = "chip-none";
+  chip.addEventListener("click", function(e){ e.preventDefault(); navigateToCard(aEl.id, i); });
+  toc.appendChild(chip);
+}
+
+/* 轻量 toast 提示（自包含，首次调用时动态创建元素，不占页面空间） */
+function showToast(msg){
+  let t=document.getElementById("taf-toast");
+  if(!t){
+    t=document.createElement("div");
+    t.id="taf-toast";
+    t.style.cssText="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:rgba(20,30,50,.92);color:#fff;padding:10px 18px;border-radius:10px;font:600 13px/1.4 system-ui,-apple-system,sans-serif;z-index:9999;opacity:0;transition:opacity .25s;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,.25)";
+    document.body.appendChild(t);
+  }
+  t.textContent=msg; t.style.opacity="1";
+  clearTimeout(showToast._t);
+  showToast._t=setTimeout(()=>{ t.style.opacity="0"; }, 2200);
+}
+
+/* 保存更改：把当前选取写入本机浏览器 localStorage（按城市隔离）。
+   切换选取不会自动保存，需点击标签栏右侧「保存更改」按钮；保存前按钮呈橙色警示「未保存」。 */
+function markDirty(){
+  const b=document.getElementById("saveBtn");
+  if(b) b.classList.add("dirty");
+}
+function saveSelection(){
+  const states = {};
+  DATA.attractions.forEach(a=>{ states[a.id] = getVisit(a); });
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({city:DATA.city, states}));
+    const b=document.getElementById("saveBtn");
+    if(b) b.classList.remove("dirty");
+    showToast("已保存 ✓");
+  } catch(e){
+    showToast("保存失败：" + (e && e.message ? e.message : e));
+  }
+}
+
+function render(){
+  document.getElementById("flag").textContent = DATA.flag || "📍";
+  if(DATA._dayNum){
+    const cityParts = (DATA._allCities || []).map(c => c.cn + (c.en ? "（"+c.en+"）" : ""));
+    document.getElementById("cityTitle").textContent = DATA.country + " · 第" + DATA._dayNum + "天 · " + cityParts.join(" · ");
+    document.title = DATA.country + " · 第" + DATA._dayNum + "天" + (cityParts.length ? " · " + cityParts.join(" · ") : "");
+    document.getElementById("region").textContent = (DATA._date || "") + (DATA._weekday ? " " + DATA._weekday : "");
+  } else {
+    document.getElementById("cityTitle").textContent = DATA.country + " · " + DATA.city + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.title = DATA.country + " · " + DATA.city + " 景点导览" + (DATA.cityEn? "（"+DATA.cityEn+"）":"");
+    document.getElementById("region").textContent = DATA.region || "";
+  }
+  document.getElementById("cityIntro").textContent = DATA.intro || "";
+  const mapCity = DATA._allCities ? (DATA._allCities[0].en || DATA._allCities[0].cn) : (DATA.cityEn || DATA.city);
+  document.getElementById("cityMap").src = mapSrc(mapCity + ", " + (DATA.countryEn||DATA.country), DATA.mapZoom || 5);
+  if(DATA._home){
+    document.body.classList.add("home");
+    document.getElementById("cityTitle").textContent = DATA.city || "行程总览";
+    document.title = (DATA.city||"行程总览") + " · 行程总览";
+    document.getElementById("region").textContent = DATA.region || "";
+    document.getElementById("cityIntro").textContent = DATA.intro || "";
+    try{document.querySelector("nav.toc").style.display="none";}catch(e){}
+    renderHome();
+    bindTotop();
+    return;
+  }
+
+  const toc = document.getElementById("chips");
+  const list = document.getElementById("list");
+  /* 重绘前先清空容器，保证 render() 可安全重复调用（如云端同步后二次重绘），
+     否则会叠加出重复卡片与重复标签栏 chip。 */
+  toc.innerHTML = "";
+  list.innerHTML = "";
+  /* 先为所有景点补齐稳定且唯一的 id（优先用自带 id，否则回退 "a"+序号），
+     供锚点、标签栏 data-id、勾选回传与保存集合统一使用——缺失 id 会导致
+     标签亮显错位、勾选与卡片不同步、保存失效。 */
+  DATA.attractions.forEach((a,i)=>{ if(!a.id) a.id = "a"+i; });
+  const stateMap = loadStates();
+  DATA.attractions.forEach((a,i)=>{
+    if(a.kind==="note"){ renderNote(a); return; }
+    if(a.kind==="logistics" || a.logistics){ renderLogistics(a,i); return; }
+    const v = stateMap.get(a.id) || null;
+    a.visit = v;
+    a.selected = v!==null;
+    const visitClass = v==="inside"?"vt-inside":v==="outside"?"vt-outside":"vt-none";
+    const visitIco = v==="inside"?"✓":v==="outside"?"○":"○";
+    const visitTxt = v==="inside"?"入内参观":v==="outside"?"外部参观":"不参观";
+    const phNote = a.placeholder ? `<span class="ph-note">⚠ 该景点暂未收录详细导览，可后续用景点搜罗补充</span>` : "";
+    const aEl = document.createElement("section");
+    aEl.className = "attraction" + (a.placeholder?" placeholder":"");
+    aEl.id = a.id || ("a"+i);
+    aEl.setAttribute("data-visit", v||"none");
+    aEl.setAttribute("data-selected", v!==null ? "true" : "false");
+    const imgs = (a.photos||[]).map(p=>`<img src="${p}" alt="${a.name}" loading="lazy" onclick="openLb('${p}')">`).join("");
+    const reviewItems = (a.reviewList||[]).map(r=>{
+      let t="good", txt=r;
+      if(r && typeof r==="object"){ t=r.type||"good"; txt=r.t||r.text||""; }
+      const lb = TYPE_LABEL[t]||"好评";
+      return `<li class="review-item rt-${t}"><span class="rbadge rb-${t}">${lb}</span><span class="rtext">${txt}</span></li>`;
+    }).join("");
+    const scoreHtml = (a.rating!=null)
+      ? `<span class="stars">${stars(a.rating)}</span><span class="score">${a.rating}</span><span class="meta"> / 5</span>`
+      : `<span class="stars">${stars(a.rating)}</span>`;
+    const extraFacts = [
+      (a.duration? `<div class="fact"><h4>建议时长</h4><p>${a.duration}</p></div>` : ""),
+      (a.tips? `<div class="fact"><h4>实用贴士</h4><p>${a.tips}</p></div>` : "")
+    ].join("");
+    /* v2.1：谷歌地图直达链接（移动端可唤起 Google 地图 App） */
+    const gmapUrl = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a.mapQuery || (a.name + " " + DATA.city));
+    aEl.innerHTML = `
+      <div class="left">
+        <div class="a-head">
+          <h2>${a.name}</h2><span class="en">${a.nameEn||""}</span>
+          <button type="button" class="visit-toggle ${visitClass}" onclick="cycleVisit('${a.id}')">
+            <span class="vt-ico">${visitIco}</span><span class="vt-txt">${visitTxt}</span>
+          </button>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${a.tag||""}</span>
+          <a class="gmap-head gmap-tag" target="_blank" rel="noopener" href="${gmapUrl}">📍 谷歌地图</a>
+        </div>
+        <p class="a-intro">${a.intro||""}</p>${phNote}
+        <div class="facts">
+          <div class="fact"><h4>开放时间</h4><p>${a.hours||"—"}</p></div>
+          <div class="fact"><h4>票价</h4><p>${a.price||"—"}</p></div>
+          ${extraFacts}
+        </div>
+        <div class="gallery">${imgs}</div>
+      </div>
+      <aside class="right">
+        <div class="mapcard">
+          <iframe class="map-frame" loading="lazy" title="Google 地图"
+            src="${mapSrc(a.mapQuery,15)}" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
+          <div class="reviewcol">
+            <div class="review-card">
+              <div class="rc-title">评价</div>
+              <div>${scoreHtml}</div>
+              <div class="meta">${a.reviews? a.reviews.toLocaleString()+" 条评价":""}</div>
+              <div class="src">来源：${a.ratingSource||"第三方聚合"}</div>
+              ${reviewItems? `<ul class="review-list">${reviewItems}</ul>`:""}
+              <a class="gmap-link" target="_blank" rel="noopener" href="${gmapUrl}">在 Google 地图查看 ↗</a>
+            </div>
+          </div>
+        </div>
+      </aside>`;
+    list.appendChild(aEl);
+
+    // 顶部标签栏 chip（蓝色=已选）；点击跳转：移动端横向滑动到对应卡片，桌面端平滑滚动到锚点
+    const chip = document.createElement("a");
+    chip.href = "#" + aEl.id;
+    chip.dataset.id = a.id;
+    chip.dataset.idx = i;
+    chip.textContent = a.name;
+    chip.className = v==="inside" ? "chip-inside" : v==="outside" ? "chip-outside" : "chip-none";
+    chip.addEventListener("click", function(e){
+      e.preventDefault();
+      navigateToCard(aEl.id, i);
+    });
+    toc.appendChild(chip);
+  });
+  writeSel();
+  setNavHeight(); // chip 已生成，此刻测量标签栏真实高度并写入 --nav-h
+}
+
+/* 沿途备注卡（取车/停车/超市/住宿/起点/还车等），不入标签栏 chip */
+function renderNote(a){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const ICONS = {取车:"🚗", 停车:"🅿️", 超市:"🛒", 住宿:"🏨", 起点:"📍", 还车:"🔑", 景点:"📌", 轮渡:"⛴️"};
+  const icon = ICONS[a.noteType] || "📝";
+  const el = document.createElement("div");
+  el.className = "note-card";
+  el.innerHTML = `<div class="ni">${icon}</div><div class="nt">${a.text||""}</div>`;
+  list.appendChild(el);
+}
+
+/* 首页总览：把每天的日卡渲染为卡片网格（仿景点搜罗首页的城市卡片） */
+const DAY_PALETTE = ["#2f6df0","#e14b4b","#f59e0b","#10b981","#06b6d4","#8b5cf6",
+                     "#f97316","#ec4899","#0ea5e9","#64748b","#14a44d","#9333ea"];
+function renderHome(){
+  const list = document.getElementById("list");
+  if(!list) return;
+  const days = DATA._days || [];
+  list.className = "wrap"; // 去掉 deck（首页纵向滚动，不横向滑卡）
+  list.innerHTML = "";
+  if(days.length){
+    const h = document.createElement("h2");
+    h.className = "day-sec-t";
+    h.innerHTML = `每日行程 <span class="ct">${days.length}</span>`;
+    list.appendChild(h);
+  }
+  const grid = document.createElement("div");
+  grid.className = "day-grid";
+  days.forEach((d,idx)=>{
+    const color = DAY_PALETTE[idx % DAY_PALETTE.length];
+    const dn = (d.n!=null? d.n : (d.file||"").replace(/\D/g,"")) || (idx+1);
+    const chain = (d.cities||[]).map(c=>`<span>${c}</span>`).join('<span class="arr">➡️</span>');
+    const prev = (d.preview||[]).join("、");
+    const el = document.createElement("a");
+    el.className = "day-card";
+    el.href = d.file || "#";
+    el.innerHTML =
+      `<div class="dc-logo" style="background:${color}">D${dn}</div>` +
+      `<div class="dc-body">` +
+        `<div class="dc-day">${d.label||("第"+dn+"天")}</div>` +
+        `<div class="dc-date">${d.date||""} ${d.weekday||""}</div>` +
+        `<div class="dc-chain">${chain}</div>` +
+        `<div class="dc-hotel">🏨 ${d.hotel||"—"}</div>` +
+        (prev? `<div class="dc-prev">${prev}</div>` : "") +
+      `</div>`;
+    grid.appendChild(el);
+  });
+  list.appendChild(grid);
+}
+
+/* 返回顶部浮钮：滚动超过一屏时显示，点击平滑回顶（单次绑定） */
+function bindTotop(){
+  var b = document.getElementById("toTop");
+  if(!b || b.dataset.bound) return;
+  b.dataset.bound = "1";
+  window.addEventListener("scroll", function(){
+    if(window.scrollY > 320) b.classList.add("show"); else b.classList.remove("show");
+  }, {passive:true});
+  b.addEventListener("click", function(){ window.scrollTo({top:0, behavior:"smooth"}); });
+}
+
+/* 测量顶部标签栏真实高度（chip 换行会变高），写入 --nav-h，供锚点偏移与右栏吸顶对齐使用 */
+function setNavHeight(){
+  const nav = document.querySelector("nav.toc");
+  if(nav) document.documentElement.style.setProperty("--nav-h", nav.offsetHeight + "px");
+}
+
+/* 复制所选清单按钮已移除：标签栏只保留选择状态 chip（蓝色=已选、灰色=未选），选择状态经卡片 data-selected / #taf-selection JSON 对外可读（文件即唯一真相，不依赖 localStorage）。 */
+
+/* 移动端横向滑动卡片：滑动到某景点时，自动高亮并把对应标签栏 chip 滚动居中 */
+function centerChip(idx){
+  const deck = document.getElementById("list");
+  if(!deck || deck.scrollWidth <= deck.clientWidth + 4) return; // 仅横向滑动（移动端）生效
+  const chipsEl = document.getElementById("chips");
+  if(!chipsEl) return;
+  const chip = chipsEl.querySelector('a[data-idx="'+idx+'"]');
+  if(!chip) return;
+  chipsEl.querySelectorAll('a').forEach(c=>c.classList.remove("active-chip"));
+  chip.classList.add("active-chip");
+  const target = chip.offsetLeft - (chipsEl.clientWidth - chip.offsetWidth) / 2;
+  chipsEl.scrollTo({left: Math.max(0, target), behavior:"smooth"});
+}
+function bindDeckScroll(){
+  const deck = document.getElementById("list");
+  if(!deck) return;
+  deck.addEventListener("scroll", ()=>{
+    if(deck.scrollWidth <= deck.clientWidth + 4) return;
+    const idx = Math.round(deck.scrollLeft / deck.clientWidth);
+    centerChip(idx);
+  }, {passive:true});
+}
+
+/* 桌面端：让右栏地图与评价卡分别和左栏内容上下对齐
+   - 地图高度 = 从标题顶部到「实用贴士」卡片底部的高度
+   - 评价卡高度 = 图片画廊高度（若内容超出则内部滚动） */
+function alignDesktopCards(){
+  const deck = document.getElementById("list");
+  if(deck && deck.scrollWidth > deck.clientWidth + 4) return; // 手机端不执行
+  document.querySelectorAll(".attraction").forEach(function(card){
+    const aHead = card.querySelector(".a-head");
+    const facts = card.querySelector(".facts");
+    const gallery = card.querySelector(".gallery");
+    const mapFrame = card.querySelector(".map-frame");
+    const reviewCol = card.querySelector(".reviewcol");
+    if(!aHead || !facts || !mapFrame) return;
+    const headRect = aHead.getBoundingClientRect();
+    const factsRect = facts.getBoundingClientRect();
+    const mapH = Math.round(factsRect.bottom - headRect.top);
+    mapFrame.style.height = mapH + "px";
+    mapFrame.style.minHeight = mapH + "px";
+    mapFrame.style.flex = "0 0 auto"; /* 防止 flex-grow 把地图撑高过设置值 */
+    if(gallery && reviewCol){
+      const galleryH = Math.round(gallery.getBoundingClientRect().height);
+      reviewCol.style.height = galleryH + "px";
+      reviewCol.style.minHeight = galleryH + "px";
+      reviewCol.style.overflowY = "auto";
+    }
+  });
+}
+/* 监听图片懒加载完成，图片加载导致画廊高度变化后重新对齐 */
+function observeGalleryImages(){
+  document.querySelectorAll(".gallery img").forEach(function(img){
+    if(img.complete) return;
+    img.addEventListener("load", function(){ alignDesktopCards(); }, {once:true});
+  });
+}
+
+function openLb(src){document.getElementById("lbImg").src=src;document.getElementById("lightbox").classList.add("open");}
+function closeLb(){document.getElementById("lightbox").classList.remove("open");}
+document.getElementById("lightbox").addEventListener("click",e=>{if(e.target.id==="lightbox")closeLb();});
+render();
+setNavHeight();
+bindDeckScroll();
+centerChip(0);
+alignDesktopCards();
+window.addEventListener("load", ()=>{ setNavHeight(); centerChip(0); alignDesktopCards(); observeGalleryImages(); });
+window.addEventListener("resize", ()=>{ setNavHeight(); alignDesktopCards(); });
+</script>
+</body>
+</html>
