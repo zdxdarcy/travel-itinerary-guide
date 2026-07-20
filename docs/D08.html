@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>景点导览</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<!-- 用户数据库：Supabase JS（登录 + 行程标注云同步，与景点搜罗同源） -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --bg:#f6f7f9; --card:#ffffff; --ink:#1f2733; --muted:#6b7686;
@@ -165,6 +167,8 @@
     .reviewcol{order:1;margin-bottom:0}
     .right{display:block} /* 手机端：右栏不再等高拉伸，恢复普通块流 */
     .gmap-tag{display:inline-flex}
+    /* 手机端：每景点仅显示前 2 张照片（桌面端保持 6 张不变） */
+    .attraction .gallery img:nth-child(n+3){display:none}
   }
   @media (max-width:560px){
     .hero-map{width:100%;flex:none}
@@ -251,6 +255,64 @@
     .dc-logo{width:48px;height:48px;font-size:15px}
     .dc-day{font-size:16px}
   }
+/* ===================== 用户数据库：登录弹窗 + 标注编辑器 ===================== */
+.ct-auth{margin-left:auto;display:flex;gap:8px;align-items:center}
+.ct-auth-user{font-size:13px;color:#cdd7ea;white-space:nowrap}
+.ct-auth-btn{font-size:12.5px;font-weight:700;color:#fff;background:rgba(255,255,255,.14);
+  border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:5px 13px;cursor:pointer;white-space:nowrap}
+.ct-auth-btn:hover{background:rgba(255,255,255,.26)}
+.taf-auth-float{position:fixed;top:8px;right:8px;z-index:650;background:rgba(15,31,61,.92);padding:6px 10px;border-radius:999px;display:flex;gap:8px;align-items:center;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+#itinAuthModal{position:fixed;inset:0;background:rgba(8,14,26,.78);display:none;align-items:center;justify-content:center;z-index:2000;padding:20px}
+#itinAuthModal.open{display:flex}
+.taf-modal{width:min(380px,92vw);background:#fff;border-radius:18px;padding:26px 24px;box-shadow:0 20px 60px rgba(0,0,0,.4);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+.taf-modal h3{margin:0 0 4px;font-size:21px;color:#1f2733}
+.taf-modal .sub{margin:0 0 18px;font-size:13px;color:#6b7686;line-height:1.5}
+.taf-field{margin-bottom:12px}
+.taf-field label{display:block;font-size:12.5px;color:#6b7686;margin-bottom:5px;font-weight:600}
+.taf-field input{width:100%;padding:11px 13px;border:1px solid #d8dee8;border-radius:10px;font-size:15px;box-sizing:border-box;outline:none}
+.taf-field input:focus{border-color:#2f6df0}
+.taf-row{display:flex;gap:10px;margin-top:6px}
+.taf-btn{flex:1;padding:11px 0;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer}
+.taf-btn.primary{background:#2f6df0;color:#fff}
+.taf-btn.primary:hover{background:#1f5ad6}
+.taf-btn.primary:disabled{opacity:.6;cursor:default}
+.taf-btn.ghost{flex:0 0 auto;background:#eef1f5;color:#33404f}
+.taf-btn.ghost:hover{background:#e2e7ee}
+.taf-auth-msg{font-size:13px;min-height:18px;margin-top:12px;line-height:1.4}
+.taf-auth-msg.err{color:#cf3b3b}
+.taf-auth-msg.ok{color:#1f9d4d}
+.taf-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:rgba(20,30,50,.92);color:#fff;
+  padding:10px 18px;border-radius:10px;font:600 13px/1.4 system-ui,-apple-system,sans-serif;z-index:9999;opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s}
+.taf-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* 标注编辑器：放在每个景点卡片前 */
+.note-editor{margin:18px 0 0;padding:12px 14px;background:var(--card);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 2px 10px rgba(120,90,0,.05)}
+.note-editor .ne-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.note-editor .ne-label{font-size:13px;font-weight:700;color:#9a7b16}
+.ne-edit-btn{font-size:12px;font-weight:700;color:#9a7b16;background:#fff;border:1px solid #e7d9a3;border-radius:999px;padding:4px 12px;cursor:pointer}
+.ne-edit-btn:hover{background:#fdf6e3}
+.ne-view{padding:2px 0;font-size:14.5px;line-height:1.7;color:#3a3320;min-height:20px}
+.ne-view.empty .ne-ph{color:#b3a06a;font-style:italic;font-size:13.5px}
+.ne-edit{margin-top:6px}
+.ne-toolbar{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.ne-color{width:22px;height:22px;border-radius:6px;cursor:pointer;border:1px solid rgba(0,0,0,.12);transition:transform .1s}
+.ne-color:hover{transform:scale(1.12)}
+.ne-save{margin-left:auto;font-size:12.5px;font-weight:800;color:#fff;background:#2f9e44;border:none;border-radius:9px;padding:6px 14px;cursor:pointer}
+.ne-save:hover{background:#2b8a3e}
+.ne-cancel{font-size:12.5px;font-weight:700;color:#6b7686;background:#eef1f5;border:none;border-radius:9px;padding:6px 14px;cursor:pointer}
+.ne-cancel:hover{background:#e2e7ee}
+.ne-input{min-height:64px;max-height:240px;overflow:auto;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);
+  font-size:14.5px;line-height:1.7;color:#3a3320;outline:none}
+.ne-input:empty:before{content:attr(data-ph);color:#b3a06a;font-style:italic}
+.ne-input:focus{border-color:#2f6df0}
+@media (max-width:620px){
+  .note-editor{padding:10px 11px}
+  .ne-input{min-height:56px}
+  .ne-save,.ne-cancel{padding:6px 11px}
+}
 </style>
 </head>
 <body>
@@ -293,6 +355,30 @@
 <div class="lb" id="lightbox"><span class="close" onclick="closeLb()">×</span><img id="lbImg" src="" alt=""></div>
 <div class="toast" id="toast"></div>
 <button class="totop" id="toTop" title="返回顶部" aria-label="返回顶部"><span class="arw">↑</span><span class="lbl">顶部</span></button>
+
+<!-- 登录 / 注册 弹窗（与景点搜罗一致：邮箱后缀 @taf.local，同一 Supabase 项目，账号互通） -->
+<div id="itinAuthModal">
+  <div class="taf-modal">
+    <h3>登录 / 注册</h3>
+    <p class="sub">登录后，景点的「参观状态」与你的「我的标注」会同步到云端，跨设备可用。不想注册？点「游客模式」直接浏览（标注仅存本机）。</p>
+    <div class="taf-field">
+      <label>用户名</label>
+      <input id="itinUser" type="text" autocomplete="username" placeholder="例如 travelfan">
+    </div>
+    <div class="taf-field">
+      <label>密码</label>
+      <input id="itinPass" type="password" autocomplete="current-password" placeholder="至少 6 位">
+    </div>
+    <div class="taf-row">
+      <button class="taf-btn primary" id="itinLoginBtn" onclick="ITIN.login()">登录</button>
+      <button class="taf-btn primary" id="itinSignupBtn" onclick="ITIN.signup()">注册</button>
+    </div>
+    <div class="taf-row">
+      <button class="taf-btn ghost" onclick="ITIN.guest()">游客模式（仅本机）</button>
+    </div>
+    <div class="taf-auth-msg" id="itinAuthMsg"></div>
+  </div>
+</div>
 
 <script>
 /* =========================================================================
@@ -340,6 +426,8 @@ const DATA = {
   "mapZoom": 5,
   "_storeKey": "taf-itin-D08",
   "_dayNum": 8,
+  "_tripId": "德国深度游2026",
+  "_tripTitle": "德国深度游2026",
   "_allCities": [
     {
       "cn": "慕尼黑",
@@ -918,6 +1006,7 @@ function saveSelection(){
     const b=document.getElementById("saveBtn");
     if(b) b.classList.remove("dirty");
     showToast("已保存 ✓");
+    if(typeof ITIN!=="undefined" && ITIN) ITIN.syncSave();
   } catch(e){
     showToast("保存失败：" + (e && e.message ? e.message : e));
   }
@@ -1043,6 +1132,7 @@ function render(){
     });
     toc.appendChild(chip);
   });
+  postRenderNotes();
   writeSel();
   setNavHeight(); // chip 已生成，此刻测量标签栏真实高度并写入 --nav-h
 }
@@ -1178,6 +1268,235 @@ function observeGalleryImages(){
 function openLb(src){document.getElementById("lbImg").src=src;document.getElementById("lightbox").classList.add("open");}
 function closeLb(){document.getElementById("lightbox").classList.remove("open");}
 document.getElementById("lightbox").addEventListener("click",e=>{if(e.target.id==="lightbox")closeLb();});
+/* =========================== 用户数据库：登录 + 行程标注云同步（与景点搜罗一致） =========================== */
+const SUPABASE_URL="https://sbiijjprqktkdfhlsmmm.supabase.co";
+const SUPABASE_ANON="sb_publishable_i59OhFlpqJ5kALIoDyI17w_qlkKTAbM";
+const EMAIL_SUFFIX="@taf.local";
+const NOTE_LS_KEY = "itin-notes-" + (DATA._tripId || (DATA.city||"trip"));
+
+/* 全局标注缓存：cloudKey -> {html, text} */
+const NOTES = {};
+(function _loadNotesLS(){
+  try{
+    const raw = localStorage.getItem(NOTE_LS_KEY);
+    if(raw){ const o = JSON.parse(raw); if(o && o.notes) Object.assign(NOTES, o.notes); }
+  }catch(e){}
+})();
+
+/* cloudKey：跨天唯一，避免不同天同名景点 id 冲突（与云端存储键一致） */
+function cloudKey(attrId){ return (DATA._dayNum!=null ? "D"+DATA._dayNum+":" : "") + attrId; }
+function tripId(){ return DATA._tripId || (DATA.city||"trip"); }
+function tripTitle(){ return DATA._tripTitle || DATA.city || "行程"; }
+
+/* ---------- 标注编辑器：放在每个景点介绍前一项（卡片内，背景同其它内容） ---------- */
+const NE_COLORS = [   // 高亮背景色（hiliteColor），采用浅色系以保证其上文字可读
+  {c:"#fff3a3",n:"黄"},{c:"#b9f6ca",n:"绿"},{c:"#ffd6e7",n:"粉"},
+  {c:"#c5e1ff",n:"蓝"},{c:"#ffccbc",n:"橙"},{c:"#e1bee7",n:"紫"}
+];
+function createNoteEditor(attrId){
+  const key = cloudKey(attrId);
+  const wrap = document.createElement("div");
+  wrap.className = "note-editor";
+  wrap.dataset.key = key;
+  let initHtml = (NOTES[key] && NOTES[key].html) ? NOTES[key].html : "";
+  wrap.innerHTML =
+    '<div class="ne-head"><span class="ne-label">📝 我的标注</span>'+
+    '<button type="button" class="ne-edit-btn">编辑</button></div>'+
+    '<div class="ne-view"></div>'+
+    '<div class="ne-edit" style="display:none">'+
+      '<div class="ne-toolbar">'+
+        NE_COLORS.map(c=>'<span class="ne-color" title="'+c.n+'" data-c="'+c.c+'" style="background:'+c.c+'"></span>').join("")+
+        '<button type="button" class="ne-save">保存</button>'+
+        '<button type="button" class="ne-cancel">取消</button>'+
+      '</div>'+
+      '<div class="ne-input" contenteditable="true" data-ph="点击输入对该景点的标注，选中文字可设高亮色…"></div>'+
+    '</div>';
+  const view = wrap.querySelector(".ne-view");
+  const editBox = wrap.querySelector(".ne-edit");
+  const input = wrap.querySelector(".ne-input");
+  function renderView(){
+    if(initHtml && initHtml.trim()){ view.innerHTML = initHtml; view.classList.remove("empty"); }
+    else { view.innerHTML = '<span class="ne-ph">点击「编辑」添加你的标注（如必去理由、预约提示、个人备注）…</span>'; view.classList.add("empty"); }
+  }
+  renderView();
+  wrap.querySelector(".ne-edit-btn").addEventListener("click", function(){
+    input.innerHTML = initHtml || "";
+    view.style.display = "none"; editBox.style.display = "block";
+    setTimeout(function(){ input.focus(); }, 0);
+  });
+  wrap.querySelector(".ne-cancel").addEventListener("click", function(){
+    editBox.style.display = "none"; view.style.display = "block";
+  });
+  wrap.querySelectorAll(".ne-color").forEach(function(sp){
+    /* 关键修复：点击色块时阻止 mousedown 默认行为，避免输入框失焦导致「已选中文字」的选区丢失。
+       否则 execCommand 只会作用于此后新输入的文字，而非当前选中的文字。 */
+    sp.addEventListener("mousedown", function(e){
+      e.preventDefault();   // 保留输入框焦点与已选文字选区
+      try{ document.execCommand("styleWithCSS", false, true); }catch(e){}
+      // 改变【选中文字】的高亮背景色（hiliteColor）；无选区时作用于此后输入的文字
+      let ok = false;
+      try{ ok = document.execCommand("hiliteColor", false, sp.dataset.c); }catch(e){ ok = false; }
+      if(!ok){ try{ document.execCommand("backColor", false, sp.dataset.c); }catch(e){} }
+    });
+  });
+  wrap.querySelector(".ne-save").addEventListener("click", function(){
+    const html = input.innerHTML;
+    const text = input.textContent.trim();
+    if(text){ NOTES[key] = {html:html, text:text}; } else { delete NOTES[key]; }
+    initHtml = html;
+    renderView();
+    editBox.style.display = "none"; view.style.display = "block";
+    if(typeof ITIN !== "undefined" && ITIN) ITIN.syncSave();
+    else showToast("已保存（本机）");
+  });
+  return wrap;
+}
+/* 在每个真实景点卡片前插入标注编辑器（首页/物流卡/沿途备注卡除外） */
+function postRenderNotes(){
+  if(DATA._home) return;
+  const list = document.getElementById("list");
+  if(!list) return;
+  DATA.attractions.forEach(function(a){
+    if(a.kind==="note" || a.logistics) return;
+    const card = document.getElementById(a.id);
+    if(!card) return;
+    // 放进卡片内、景点介绍（<p class="a-intro">）的前一项；手机/桌面均显示
+    // 注意：.a-intro 是 .left 的直接子节点，故相对 .left 执行 insertBefore
+    const left = card.querySelector(".left") || card;
+    const introEl = left.querySelector(".a-intro");
+    if(introEl) left.insertBefore(createNoteEditor(a.id), introEl);
+    else left.insertBefore(createNoteEditor(a.id), left.firstChild);
+  });
+}
+
+/* ---------- 登录与云同步（Supabase，与景点搜罗 / planner.html 同源） ---------- */
+const ITIN = (function(){
+  let sb=null, session=null, username=null;
+  const GUEST_KEY="itin_guest";
+  function initClient(){
+    if(sb) return;
+    if(!window.supabase || !window.supabase.createClient){ console.warn("Supabase SDK 未加载"); return; }
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {auth:{persistSession:true, autoRefreshToken:true, storageKey:"itin-auth"}});
+  }
+  function el(id){ return document.getElementById(id); }
+  function openModal(){ const m=el("itinAuthModal"); if(m) m.classList.add("open"); }
+  function closeModal(){ const m=el("itinAuthModal"); if(m) m.classList.remove("open"); }
+  function showMsg(m,isErr){ const b=el("itinAuthMsg"); if(!b) return; b.textContent=m; b.className="taf-auth-msg"+(isErr?" err":" ok"); }
+  function setBusy(b){ ["itinLoginBtn","itinSignupBtn"].forEach(function(id){ const e=el(id); if(e) e.disabled=b; }); }
+  function getSb(){ return sb; }
+  function getSession(){ return session; }
+  async function doGetSession(){
+    initClient(); if(!sb) return null;
+    const r = await sb.auth.getSession();
+    session = (r.data && r.data.session) || null;
+    if(session){ username = (session.user.user_metadata && session.user.user_metadata.username) || (session.user.email||"").replace(EMAIL_SUFFIX,""); }
+    return session;
+  }
+  async function doLogin(){
+    const u=el("itinUser").value.trim(), p=el("itinPass").value;
+    if(!u||!p){ showMsg("请输入用户名和密码",true); return; }
+    setBusy(true); showMsg("登录中…"); initClient();
+    if(!sb){ setBusy(false); showMsg("登录服务未就绪，请稍后重试",true); return; }
+    const r = await sb.auth.signInWithPassword({email:u+EMAIL_SUFFIX, password:p});
+    setBusy(false);
+    if(r.error){ showMsg("登录失败："+(r.error.message||r.error),true); return; }
+    session=r.data.session; username=u; localStorage.removeItem(GUEST_KEY); closeModal();
+    showToast("已登录："+u); await afterLogin();
+  }
+  async function doSignup(){
+    const u=el("itinUser").value.trim(), p=el("itinPass").value;
+    if(!u||!p){ showMsg("请输入用户名和密码",true); return; }
+    if(u.length<2){ showMsg("用户名至少 2 个字符",true); return; }
+    setBusy(true); showMsg("注册中…"); initClient();
+    if(!sb){ setBusy(false); showMsg("注册服务未就绪，请稍后重试",true); return; }
+    const r = await sb.auth.signUp({email:u+EMAIL_SUFFIX, password:p, options:{data:{username:u}}});
+    setBusy(false);
+    if(r.error){ let m=r.error.message||String(r.error); if(/email/i.test(m)&&/already/i.test(m)) m="用户名已存在"; showMsg("注册失败："+m,true); return; }
+    if(r.data && r.data.session){ session=r.data.session; username=u; localStorage.removeItem(GUEST_KEY); closeModal(); showToast("注册成功，已登录："+u); await afterLogin(); }
+    else { showMsg("注册成功！若开启邮箱确认，请查收邮件后再登录。",false); }
+  }
+  function doGuest(){ localStorage.setItem(GUEST_KEY,"1"); closeModal(); renderStatus(); showToast("游客模式：标注仅存本机"); }
+  function doLogout(){ if(sb) sb.auth.signOut(); session=null; username=null; localStorage.removeItem(GUEST_KEY); renderStatus(); showToast("已退出登录"); }
+  async function afterLogin(){ renderStatus(); await loadAndApply(); }
+  async function loadAndApply(){
+    if(!session) return; initClient(); if(!sb) return;
+    const r = await sb.from("trips").select("states,notes").eq("user_id",session.user.id).eq("trip_id",tripId()).maybeSingle();
+    if(r.error){ console.warn("云端读取失败:",r.error); showToast("云端读取失败："+(r.error.message||r.error)); return; }
+    if(!r.data){ showToast("云端暂无本行程标注"); return; }
+    /* 标注：写入全局缓存 + 本机 */
+    if(r.data.notes && typeof r.data.notes==="object"){
+      Object.keys(r.data.notes).forEach(function(k){ NOTES[k]=r.data.notes[k]; });
+      try{ localStorage.setItem(NOTE_LS_KEY, JSON.stringify({trip:tripId(), notes:NOTES})); }catch(e){}
+    }
+    /* 选择状态：合并进本机（仅当天前缀），再整体重绘 */
+    if(r.data.states && typeof r.data.states==="object"){
+      const prefix = "D"+(DATA._dayNum!=null?DATA._dayNum:"")+":";
+      const local = {};
+      Object.keys(r.data.states).forEach(function(k){ if(k.indexOf(prefix)===0) local[k.slice(prefix.length)] = r.data.states[k]; });
+      if(Object.keys(local).length){ try{ localStorage.setItem(STORE_KEY, JSON.stringify({city:DATA.city, states:local})); }catch(e){} }
+    }
+    render(); /* 重绘以应用云端标注与状态（render 会重新挂载编辑器并读取 NOTES / localStorage） */
+    const cnt = Object.keys(NOTES).length;
+    showToast(cnt ? ("已从云端同步 "+cnt+" 条标注 ✓") : "已从云端同步（0 条标注）");
+  }
+  async function syncSave(){
+    /* 汇总本页各景点参观状态 */
+    const states = {};
+    DATA.attractions.forEach(function(a){ if(a.kind!=="note" && !a.logistics) states[cloudKey(a.id)] = getVisit(a); });
+    /* 本机先存 */
+    try{ localStorage.setItem(NOTE_LS_KEY, JSON.stringify({trip:tripId(), notes:NOTES})); }catch(e){}
+    const sb2=getSb(), s=getSession();
+    if(!sb2 || !s){ showToast("已存本机（登录后同步云端）"); return; }
+    const payload = { user_id:s.user.id, trip_id:tripId(), title:tripTitle(), states:states, notes:NOTES, updated_at:new Date().toISOString() };
+    let r = await sb2.from("trips").upsert(payload, {onConflict:"user_id,trip_id"});
+    /* 自愈：若库未执行 SQL、data 仍为 NOT NULL，则补一个空对象重试。
+       行程页不使用 data 列，且此错误只在「新建行程行」时触发（既有行已带 data，不会命中），
+       因此补 data:{} 不会覆盖 planner.html 已有的 data。 */
+    if(r.error && /not-null|null value|violates not-null/i.test(r.error.message||"")){
+      const payload2 = Object.assign({}, payload, { data:{} });
+      r = await sb2.from("trips").upsert(payload2, {onConflict:"user_id,trip_id"});
+    }
+    if(r.error){
+      const m = r.error.message || "";
+      if(/not-null|null value/i.test(m)) showToast("云端 trips.data 需允许为空，请执行最新 trip_notes_columns.sql");
+      else if(/column|states|notes/i.test(m)) showToast("云端 trips 表缺少 states/notes 列，请执行 trip_notes_columns.sql");
+      else if(/relation|trips|does not exist/i.test(m)) showToast("云端 trips 表不存在，请先执行 planner-supabase.sql 建表");
+      else showToast("云端保存失败："+m);
+      return;
+    }
+    showToast("已保存到云端 ✓");
+  }
+  function renderStatus(){
+    let slot = el("itinAuthFloat");
+    if(!slot){ slot = document.createElement("span"); slot.id="itinAuthFloat"; slot.className="ct-auth taf-auth-float"; document.body.appendChild(slot); }
+    if(session){
+      const uid = String(session.user.id);
+      slot.innerHTML = '<span class="ct-auth-user">👤 '+(username||"用户")+' <small style="opacity:.55;font-size:11px">#'+uid.slice(0,8)+'</small></span><button class="ct-auth-btn" id="itinLogoutBtn">退出</button>';
+      const lb = el("itinLogoutBtn"); if(lb) lb.onclick = doLogout;
+    } else if(localStorage.getItem(GUEST_KEY)){
+      slot.innerHTML = '<span class="ct-auth-user">🚶 游客</span><button class="ct-auth-btn" id="itinLoginOpenBtn">登录</button>';
+      const ob = el("itinLoginOpenBtn"); if(ob) ob.onclick = openModal;
+    } else {
+      slot.innerHTML = '<button class="ct-auth-btn" id="itinLoginOpenBtn">登录 / 注册</button>';
+      const ob2 = el("itinLoginOpenBtn"); if(ob2) ob2.onclick = openModal;
+    }
+  }
+  async function boot(){
+    renderStatus();
+    const s = await doGetSession();
+    if(s){ session=s; renderStatus(); await loadAndApply(); }
+    else { renderStatus(); }
+  }
+  let tries=0;
+  (function wait(){
+    if(window.supabase && window.supabase.createClient){ initClient(); boot(); }
+    else if(tries++<80){ setTimeout(wait,100); }
+    else { console.warn("Supabase SDK 未加载，仅游客/本机模式"); boot(); }
+  })();
+  return { login:doLogin, signup:doSignup, guest:doGuest, logout:doLogout, open:openModal, syncSave:syncSave, getSb:getSb, getSession:getSession };
+})();
+function openItinAuth(){ const m=document.getElementById("itinAuthModal"); if(m) m.classList.add("open"); }
+
 render();
 setNavHeight();
 bindDeckScroll();
